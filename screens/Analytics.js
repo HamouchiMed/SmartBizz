@@ -1,19 +1,33 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, useEffect, useState } from 'react';
 import {
-  SafeAreaView,
   View,
   Text,
   StyleSheet,
   TouchableOpacity,
   ScrollView,
   Dimensions,
+  Animated,
 } from 'react-native';
 import { BlurView } from 'expo-blur';
 import Svg, { Path, Line, Circle, Text as SvgText, Rect } from 'react-native-svg';
+import { listLeads, listDeals, getBalance } from '../services/api';
 
 const { width } = Dimensions.get('window');
 
-export default function Analytics({ onBack, theme = 'dark', onNavigateToDashboard, onNavigateToWallet, onNavigateToProfile, onNavigateToEvents }) {
+export default function Analytics({ token, onBack, theme = 'dark', onNavigateToDashboard, onNavigateToWallet, onNavigateToProfile, onNavigateToEvents }) {
+  const scrollY = React.useRef(new Animated.Value(0)).current;
+
+  const headerHeight = scrollY.interpolate({
+    inputRange: [0, 120],
+    outputRange: [86, 0],
+    extrapolate: 'clamp',
+  });
+  const headerOpacity = scrollY.interpolate({
+    inputRange: [0, 80, 120],
+    outputRange: [1, 0.5, 0],
+    extrapolate: 'clamp',
+  });
+
   const colors = theme === 'dark' ? {
     background: '#1F6A64',
     cardBg: '#F0EDE5',
@@ -38,17 +52,106 @@ export default function Analytics({ onBack, theme = 'dark', onNavigateToDashboar
     chartBar: '#9333EA',
   };
 
-  const lineData = [32, 55, 41, 78, 92, 64, 88];
-  const lineLabels = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
-  const barData = [12, 18, 9, 24, 30, 16];
-  const barLabels = ['Q1', 'Q2', 'Q3', 'Q4', 'Q5', 'Q6'];
+  const [lineData, setLineData] = useState([0, 0, 0, 0, 0, 0, 0]);
+  const [lineLabels, setLineLabels] = useState(['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']);
+  const [barData, setBarData] = useState([0, 0, 0, 0, 0, 0]);
+  const [barLabels, setBarLabels] = useState(['Lead', 'Qualified', 'Proposal', 'Negotiation', 'Closing', 'Closed']);
+
+  const [metrics, setMetrics] = useState({
+    revenue: 0,
+    newLeads: 0,
+    churn: 0,
+    avgDeal: 0,
+  });
+
+  const parseAmount = (value) => {
+    if (typeof value === 'number') return value;
+    if (!value) return 0;
+    const raw = String(value).trim().toLowerCase();
+    const mult = raw.includes('m') ? 1_000_000 : raw.includes('k') ? 1_000 : 1;
+    const numeric = parseFloat(raw.replace(/[^0-9.-]/g, '')) || 0;
+    return numeric * mult;
+  };
+
+  useEffect(() => {
+    async function loadAnalyticsMetrics() {
+      if (!token) {
+        setMetrics({ revenue: 0, newLeads: 0, churn: 0, avgDeal: 0 });
+        setLineData([0, 0, 0, 0, 0, 0, 0]);
+        setBarData([0, 0, 0, 0, 0, 0]);
+        return;
+      }
+      try {
+        const [leads, deals, balRes] = await Promise.all([
+          listLeads(token),
+          listDeals(token),
+          getBalance(token),
+        ]);
+
+        const safeLeads = Array.isArray(leads) ? leads : [];
+        const safeDeals = Array.isArray(deals) ? deals : [];
+        const totalDeals = safeDeals.length || 0;
+        const lostDeals = safeDeals.filter((d) => {
+          const s = String(d?.status || '').toLowerCase();
+          return s.includes('lost') || s.includes('cancel');
+        }).length;
+        const churnPct = totalDeals > 0 ? (lostDeals / totalDeals) * 100 : 0;
+        const dealAmounts = safeDeals.map((d) => parseAmount(d?.amount)).filter((n) => Number.isFinite(n) && n > 0);
+        const avgDeal = dealAmounts.length ? dealAmounts.reduce((a, b) => a + b, 0) / dealAmounts.length : 0;
+        const balanceNum = parseFloat(balRes?.amount || 0);
+        const revenue = Number.isFinite(balanceNum) ? balanceNum : 0;
+
+        setMetrics({
+          revenue,
+          newLeads: safeLeads.length,
+          churn: churnPct,
+          avgDeal,
+        });
+
+        // Weekly Performance (live): total deal amount by day for last 7 days
+        const week = [];
+        const weekLabels = [];
+        for (let i = 6; i >= 0; i -= 1) {
+          const d = new Date();
+          d.setHours(0, 0, 0, 0);
+          d.setDate(d.getDate() - i);
+          week.push({ key: d.toDateString(), value: 0 });
+          weekLabels.push(d.toLocaleDateString(undefined, { weekday: 'short' }));
+        }
+        safeDeals.forEach((d) => {
+          const src = d?.close_date || d?.dueDate || d?.created_at;
+          const dt = src ? new Date(src) : null;
+          if (!dt || Number.isNaN(dt.getTime())) return;
+          const idx = week.findIndex((w) => w.key === new Date(dt.getFullYear(), dt.getMonth(), dt.getDate()).toDateString());
+          if (idx >= 0) week[idx].value += parseAmount(d?.amount);
+        });
+        setLineData(week.map((w) => Math.round(w.value)));
+        setLineLabels(weekLabels);
+
+        // Pipeline Stages (live): count deals by stage/status buckets
+        const stageBuckets = ['lead', 'qualified', 'proposal', 'negotiation', 'closing', 'closed'];
+        const stageCounts = stageBuckets.map(() => 0);
+        safeDeals.forEach((d) => {
+          const stageText = `${d?.stage || ''} ${d?.status || ''}`.toLowerCase();
+          let idx = stageBuckets.findIndex((s) => stageText.includes(s));
+          if (idx < 0) idx = 0;
+          stageCounts[idx] += 1;
+        });
+        setBarData(stageCounts);
+        setBarLabels(['Lead', 'Qualified', 'Proposal', 'Negotiation', 'Closing', 'Closed']);
+      } catch (err) {
+        console.warn('Failed to load analytics metrics', err?.message || err);
+      }
+    }
+    loadAnalyticsMetrics();
+  }, [token]);
 
   const summary = useMemo(() => ([
-    { label: 'Revenue', value: '$128,450', delta: '+8.4%', positive: true },
-    { label: 'New Leads', value: '1,240', delta: '+12.1%', positive: true },
-    { label: 'Churn', value: '3.2%', delta: '-0.6%', positive: true },
-    { label: 'Avg Deal', value: '$9,850', delta: '-1.3%', positive: false },
-  ]), []);
+    { label: 'Revenue', value: `$${metrics.revenue.toLocaleString(undefined, { maximumFractionDigits: 0 })}`, delta: 'Live', positive: true },
+    { label: 'New Leads', value: String(metrics.newLeads), delta: 'Live', positive: true },
+    { label: 'Churn', value: `${metrics.churn.toFixed(1)}%`, delta: 'Live', positive: metrics.churn <= 5 },
+    { label: 'Avg Deal', value: `$${metrics.avgDeal.toLocaleString(undefined, { maximumFractionDigits: 0 })}`, delta: 'Live', positive: true },
+  ]), [metrics]);
 
   const renderLineChart = () => {
     const chartWidth = width - 56;
@@ -56,12 +159,14 @@ export default function Analytics({ onBack, theme = 'dark', onNavigateToDashboar
     const padding = 40;
     const innerWidth = chartWidth - 2 * padding;
     const innerHeight = chartHeight - 2 * padding;
-    const maxValue = Math.max(...lineData);
-    const minValue = Math.min(...lineData);
+    const maxValue = Math.max(...lineData, 0);
+    const minValue = Math.min(...lineData, 0);
+    const range = maxValue - minValue === 0 ? 1 : maxValue - minValue;
+    const steps = Math.max(1, lineData.length - 1);
 
     const points = lineData.map((value, index) => {
-      const x = padding + (index / (lineData.length - 1)) * innerWidth;
-      const y = padding + ((maxValue - value) / (maxValue - minValue)) * innerHeight;
+      const x = padding + (index / steps) * innerWidth;
+      const y = padding + ((maxValue - value) / range) * innerHeight;
       return { x, y, value };
     });
 
@@ -90,7 +195,7 @@ export default function Analytics({ onBack, theme = 'dark', onNavigateToDashboar
     const padding = 40;
     const innerWidth = chartWidth - 2 * padding;
     const innerHeight = chartHeight - 2 * padding;
-    const maxValue = Math.max(...barData);
+    const maxValue = Math.max(...barData, 1);
     const barWidth = (innerWidth / barData.length) * 0.8;
     const barSpacing = (innerWidth / barData.length) * 0.2;
 
@@ -119,14 +224,23 @@ export default function Analytics({ onBack, theme = 'dark', onNavigateToDashboar
   };
 
   return (
-    <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
-      <View style={[styles.header, { borderBottomColor: colors.cardBg }]}>
+    <View style={[styles.container, { backgroundColor: colors.background }]}>
+      <Animated.View style={[styles.header, { borderBottomColor: colors.cardBg, height: headerHeight, opacity: headerOpacity }]}>
         <View style={{ width: 24 }} />
         <Text style={[styles.headerTitle, { color: colors.textPrimary }]}>Analytics</Text>
         <View style={{ width: 24 }} />
-      </View>
+      </Animated.View>
 
-      <ScrollView style={{ flex: 1 }} contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+      <Animated.ScrollView
+        style={{ flex: 1 }}
+        contentContainerStyle={styles.content}
+        showsVerticalScrollIndicator={false}
+        onScroll={Animated.event(
+          [{ nativeEvent: { contentOffset: { y: scrollY } } }],
+          { useNativeDriver: false }
+        )}
+        scrollEventThrottle={16}
+      >
         <View style={styles.summaryGrid}>
           {summary.map((item, idx) => (
             <View key={idx} style={[styles.summaryCard, { backgroundColor: colors.cardBg }]}>
@@ -145,8 +259,8 @@ export default function Analytics({ onBack, theme = 'dark', onNavigateToDashboar
               <Text style={[styles.cardTitle, { color: colors.textPrimary }]}>Weekly Performance</Text>
               <Text style={[styles.cardSubtitle, { color: colors.textMuted }]}>Revenue trend</Text>
             </View>
-            <View style={[styles.pill, { backgroundColor: colors.background }]}>
-              <Text style={[styles.pillText, { color: colors.textMuted }]}>Last 7 days</Text>
+            <View style={[styles.pill, { backgroundColor: '#FFFFFF', borderColor: '#D8D2C5', borderWidth: 1 }]}>
+              <Text style={[styles.pillText, { color: '#065f46' }]}>Last 7 days</Text>
             </View>
           </View>
           <View style={styles.chart}>{renderLineChart()}</View>
@@ -158,13 +272,13 @@ export default function Analytics({ onBack, theme = 'dark', onNavigateToDashboar
               <Text style={[styles.cardTitle, { color: colors.textPrimary }]}>Pipeline Stages</Text>
               <Text style={[styles.cardSubtitle, { color: colors.textMuted }]}>Deals by quarter</Text>
             </View>
-            <View style={[styles.pill, { backgroundColor: colors.background }]}>
-              <Text style={[styles.pillText, { color: colors.textMuted }]}>YTD</Text>
+            <View style={[styles.pill, { backgroundColor: '#FFFFFF', borderColor: '#D8D2C5', borderWidth: 1 }]}>
+              <Text style={[styles.pillText, { color: '#065f46' }]}>YTD</Text>
             </View>
           </View>
           <View style={styles.chart}>{renderBarChart()}</View>
         </View>
-      </ScrollView>
+      </Animated.ScrollView>
 
       <View style={styles.bottomNavContainer}>
         <BlurView
@@ -186,13 +300,9 @@ export default function Analytics({ onBack, theme = 'dark', onNavigateToDashboar
         </TouchableOpacity>
         <TouchableOpacity style={[styles.navItem, styles.activeNav, { backgroundColor: colors.primary }]}>
           <Text style={[styles.navText, styles.activeNavText, { color: colors.textPrimary === '#1F2937' ? '#F0EDE5' : '#04222b' }]}>Analytics</Text>
-        </TouchableOpacity>
-        <TouchableOpacity style={styles.navItem} onPress={() => onNavigateToProfile?.()}>
-          <Text style={[styles.navText, { color: colors.textMuted }]}>Profile</Text>
-        </TouchableOpacity>
-        </View>
+        </TouchableOpacity></View>
       </View>
-    </SafeAreaView>
+    </View>
   );
 }
 
@@ -205,8 +315,12 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
     paddingHorizontal: 20,
-    paddingVertical: 12,
+    paddingVertical: 18,
+    backgroundColor: '#F0EDE5',
+    borderBottomLeftRadius: 18,
+    borderBottomRightRadius: 18,
     borderBottomWidth: 1,
+    overflow: 'hidden',
   },
   backButton: {
     fontSize: 18,
@@ -215,6 +329,7 @@ const styles = StyleSheet.create({
   headerTitle: {
     fontSize: 20,
     fontWeight: '700',
+    marginTop: 6,
   },
   content: {
     padding: 20,
@@ -302,7 +417,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     paddingVertical: 12,
     paddingHorizontal: 20,
-    backgroundColor: 'rgba(15, 23, 36, 0.35)',
+    backgroundColor: 'transparent',
   },
   navItem: {
     flex: 1,
@@ -322,4 +437,6 @@ const styles = StyleSheet.create({
     color: '#04222b',
   },
 });
+
+
 

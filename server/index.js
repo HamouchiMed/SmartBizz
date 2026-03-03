@@ -158,6 +158,8 @@ listCreateRoutes('messages', ['conversation_id', 'sender_name', 'recipient_name'
 listCreateRoutes('transactions', ['title', 'amount', 'type', 'date']);
 // leads for CRM
 listCreateRoutes('leads', ['name','email','phone','company','status']);
+// analytics metrics snapshots
+listCreateRoutes('analytics_metrics', ['period_label', 'revenue', 'new_leads', 'churn', 'avg_deal']);
 
 // balance endpoints: get or upsert a single per-user balance
 app.get('/balance', auth, async (req, res) => {
@@ -272,9 +274,33 @@ async function ensureDealsColumns() {
   }
 }
 
+// ensure analytics_metrics table has expected columns (in case schema evolved)
+async function ensureAnalyticsMetricsColumns() {
+  try {
+    const res = await pool.query("SELECT column_name FROM information_schema.columns WHERE table_name='analytics_metrics'");
+    const cols = res.rows.map((r) => r.column_name);
+    const needed = [
+      { name: 'period_label', sql: "ALTER TABLE analytics_metrics ADD COLUMN \"period_label\" TEXT DEFAULT 'weekly'" },
+      { name: 'revenue', sql: "ALTER TABLE analytics_metrics ADD COLUMN \"revenue\" NUMERIC DEFAULT 0" },
+      { name: 'new_leads', sql: "ALTER TABLE analytics_metrics ADD COLUMN \"new_leads\" INTEGER DEFAULT 0" },
+      { name: 'churn', sql: "ALTER TABLE analytics_metrics ADD COLUMN \"churn\" NUMERIC DEFAULT 0" },
+      { name: 'avg_deal', sql: "ALTER TABLE analytics_metrics ADD COLUMN \"avg_deal\" NUMERIC DEFAULT 0" },
+    ];
+    for (const col of needed) {
+      if (!cols.includes(col.name)) {
+        console.log('adding missing column to analytics_metrics table:', col.name);
+        await pool.query(col.sql);
+      }
+    }
+  } catch (err) {
+    console.error('error ensuring analytics_metrics columns', err.message || err);
+  }
+}
+
 ensureMessageColumns()
   .then(() => ensureContactsColumns())
   .then(() => ensureDealsColumns())
+  .then(() => ensureAnalyticsMetricsColumns())
   .then(() => {
     app.listen(PORT, () => {
       console.log(`Server running on http://localhost:${PORT}`);

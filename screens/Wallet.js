@@ -1,6 +1,5 @@
 import React, { useState } from 'react';
 import {
-  SafeAreaView,
   View,
   Text,
   StyleSheet,
@@ -14,6 +13,7 @@ import {
   Platform,
   RefreshControl,
   ActivityIndicator,
+  Animated,
 } from 'react-native';
 import { BlurView } from 'expo-blur';
 import { Ionicons } from '@expo/vector-icons';
@@ -63,6 +63,18 @@ export default function Wallet({ token, onBack, theme = 'dark', onNavigateToDash
   const [amount, setAmount] = useState('');
   const [recipient, setRecipient] = useState('');
   const [investType, setInvestType] = useState('');
+  const scrollY = React.useRef(new Animated.Value(0)).current;
+
+  const headerHeight = scrollY.interpolate({
+    inputRange: [0, 120],
+    outputRange: [82, 0],
+    extrapolate: 'clamp',
+  });
+  const headerOpacity = scrollY.interpolate({
+    inputRange: [0, 80, 120],
+    outputRange: [1, 0.5, 0],
+    extrapolate: 'clamp',
+  });
 
   React.useEffect(() => {
     // load is intentionally simple — use fetchTransactions for manual refresh
@@ -281,8 +293,8 @@ export default function Wallet({ token, onBack, theme = 'dark', onNavigateToDash
 
 
   return (
-    <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
-      <View style={[styles.header, { borderBottomColor: colors.border }]}>
+    <View style={[styles.container, { backgroundColor: colors.background }]}>
+      <Animated.View style={[styles.header, { borderBottomColor: colors.border, height: headerHeight, opacity: headerOpacity }]}>
         <View style={{ width: 24 }} />
         <Text style={[styles.headerTitle, { color: colors.textPrimary }]}>Wallet</Text>
         <TouchableOpacity style={styles.settingsButton} onPress={() => {
@@ -290,11 +302,19 @@ export default function Wallet({ token, onBack, theme = 'dark', onNavigateToDash
         }}>
           <Ionicons name="stats-chart" size={24} color={colors.primary} />
         </TouchableOpacity>
-      </View>
+      </Animated.View>
 
-      <ScrollView contentContainerStyle={styles.content} refreshControl={
+      <Animated.ScrollView
+        contentContainerStyle={styles.content}
+        refreshControl={
         <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.primary} colors={[colors.primary]} />
-      }>
+        }
+        onScroll={Animated.event(
+          [{ nativeEvent: { contentOffset: { y: scrollY } } }],
+          { useNativeDriver: false }
+        )}
+        scrollEventThrottle={16}
+      >
         <View style={[styles.balanceCard, { backgroundColor: colors.cardBg }]}>
           <Text style={[styles.balanceLabel, { color: colors.textMuted }]}>Available Balance</Text>
           <Text style={[styles.balanceAmount, { color: colors.textPrimary }]}>${balance.toFixed(2)}</Text>
@@ -444,7 +464,7 @@ export default function Wallet({ token, onBack, theme = 'dark', onNavigateToDash
             </View>
           </View>
         </Modal>
-      </ScrollView>
+      </Animated.ScrollView>
 
       <View style={styles.bottomNavContainer}>
         <BlurView
@@ -466,11 +486,7 @@ export default function Wallet({ token, onBack, theme = 'dark', onNavigateToDash
         </TouchableOpacity>
         <TouchableOpacity style={styles.navItem} onPress={() => onNavigateToAnalytics?.()}>
           <Text style={[styles.navText, { color: colors.textMuted }]}>Analytics</Text>
-        </TouchableOpacity>
-        <TouchableOpacity style={styles.navItem} onPress={() => onNavigateToProfile?.()}>
-          <Text style={[styles.navText, { color: colors.textMuted }]}>Profile</Text>
-        </TouchableOpacity>
-        </View>
+        </TouchableOpacity></View>
       </View>
 
       {/* Add Funds Modal */}
@@ -598,7 +614,7 @@ export default function Wallet({ token, onBack, theme = 'dark', onNavigateToDash
           </KeyboardAvoidingView>
         </View>
       </Modal>
-    </SafeAreaView>
+    </View>
   );
 }
 
@@ -610,9 +626,13 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingHorizontal: 16,
-    paddingVertical: 12,
+    paddingHorizontal: 20,
+    paddingVertical: 17,
+    backgroundColor: '#F0EDE5',
     borderBottomWidth: 1,
+    borderBottomLeftRadius: 18,
+    borderBottomRightRadius: 18,
+    overflow: 'hidden',
   },
   backButton: {
     padding: 8,
@@ -623,7 +643,8 @@ const styles = StyleSheet.create({
   },
   headerTitle: {
     fontSize: 20,
-    fontWeight: '800',
+    fontWeight: '700',
+    marginTop: 6,
   },
   settingsButton: {
     padding: 8,
@@ -841,7 +862,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     paddingVertical: 12,
     paddingHorizontal: 20,
-    backgroundColor: 'rgba(15, 23, 36, 0.35)',
+    backgroundColor: 'transparent',
   },
   navItem: {
     flex: 1,
@@ -917,4 +938,6 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
 });
+
+
 

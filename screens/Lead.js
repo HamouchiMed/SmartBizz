@@ -45,8 +45,8 @@ const Lead = ({ token, onBack, theme = 'light' }) => {
   }, [token]);
 
   const colors = theme === 'dark' ? {
-    background: '#F0EDE5',
-    headerBg: '#F0EDE5',
+    background: '#FFFFFF',
+    headerBg: '#FFFFFF',
     cardBg: '#101826',
     border: 'rgba(255,255,255,0.06)',
     textPrimary: '#E6EEF8',
@@ -57,8 +57,8 @@ const Lead = ({ token, onBack, theme = 'light' }) => {
     inputBg: '#0e1726',
     chipBg: '#0e1726',
   } : {
-    background: '#F4F7FF',
-    headerBg: '#F0EDE5',
+    background: '#FFFFFF',
+    headerBg: '#FFFFFF',
     cardBg: '#F0EDE5',
     border: '#E6EEFF',
     textPrimary: '#0F172A',
@@ -153,7 +153,7 @@ const Lead = ({ token, onBack, theme = 'light' }) => {
           </View>
           <View style={{ flex: 1, marginLeft: 12 }}>
             <Text style={[styles.name, { color: colors.textPrimary }]}>{item.name}</Text>
-            <Text style={[styles.company, { color: colors.textMuted }]}>{item.company}</Text>
+            <Text style={[styles.company, { color: '#4B5563' }]}>{item.company}</Text>
           </View>
           <View style={{ alignItems: 'flex-end' }}>
             <Text style={[styles.value, { color: colors.positive }]}>{item.value}</Text>
@@ -174,7 +174,7 @@ const Lead = ({ token, onBack, theme = 'light' }) => {
         </TouchableOpacity>
         <View style={{ flex: 1, paddingHorizontal: 12 }}>
           <Text style={[styles.title, { color: colors.textPrimary }]}>Leads</Text>
-          <Text style={[styles.subtitle, { color: colors.textMuted }]}>{filtered.length} results</Text>
+          <Text style={[styles.subtitle, { color: '#4B5563' }]}>{filtered.length} results</Text>
         </View>
         <TouchableOpacity style={styles.addBtnWrap} onPress={() => setShowCreate(true)} activeOpacity={0.9}>
           <BlurView
@@ -219,9 +219,9 @@ const Lead = ({ token, onBack, theme = 'light' }) => {
             {selectedLead && (
               <>
                 <Text style={[styles.modalName, { color: colors.textPrimary }]}>{selectedLead.name}</Text>
-                <Text style={[styles.modalCompany, { color: colors.textMuted }]}>{selectedLead.company}</Text>
-                <Text style={[styles.modalInfo, { color: colors.textMuted }]}>Email: {selectedLead.email}</Text>
-                <Text style={[styles.modalInfo, { color: colors.textMuted }]}>Phone: {selectedLead.phone}</Text>
+                <Text style={[styles.modalCompany, { color: '#4B5563' }]}>{selectedLead.company}</Text>
+                <Text style={[styles.modalInfo, { color: '#4B5563' }]}>Email: {selectedLead.email}</Text>
+                <Text style={[styles.modalInfo, { color: '#4B5563' }]}>Phone: {selectedLead.phone}</Text>
                     <View style={{ flexDirection: 'row', marginTop: 18 }}>
                       <TouchableOpacity style={[styles.modalBtn, { backgroundColor: colors.accent }]} onPress={() => { console.log('Call', selectedLead.phone); }}>
                         <Text style={{ color: '#fff', fontWeight: '700' }}>Call</Text>
@@ -420,4 +420,5 @@ const formStyles = StyleSheet.create({
 });
 
 export default Lead;
+
 

@@ -3,10 +3,10 @@ import {
   View,
   Text,
   StyleSheet,
-  SafeAreaView,
   TouchableOpacity,
   ScrollView,
   Dimensions,
+  Animated,
 } from 'react-native';
 import Svg, { Path, Line, Circle, Text as SvgText } from 'react-native-svg';
 import { listTransactions, getBalance } from '../services/api';
@@ -14,6 +14,18 @@ import { listTransactions, getBalance } from '../services/api';
 const { width } = Dimensions.get('window');
 
 export default function BalanceHistory({ token, onBack, theme = 'dark' }) {
+  const scrollY = React.useRef(new Animated.Value(0)).current;
+  const headerHeight = scrollY.interpolate({
+    inputRange: [0, 120],
+    outputRange: [86, 0],
+    extrapolate: 'clamp',
+  });
+  const headerOpacity = scrollY.interpolate({
+    inputRange: [0, 80, 120],
+    outputRange: [1, 0.5, 0],
+    extrapolate: 'clamp',
+  });
+
   const [selectedPeriod, setSelectedPeriod] = useState('monthly');
   const [showMoreTimeline, setShowMoreTimeline] = useState(false);
   const [showMoreTransactions, setShowMoreTransactions] = useState(false);
@@ -43,16 +55,40 @@ export default function BalanceHistory({ token, onBack, theme = 'dark' }) {
   // placeholder until real data loads
   const [balanceData, setBalanceData] = useState([]);
   const [initialBalance, setInitialBalance] = useState(0);
+  const [allTransactions, setAllTransactions] = useState([]);
+  const [recentTransactions, setRecentTransactions] = useState([]);
+
+  const getSignedAmount = (tx) => {
+    const raw = parseFloat((tx?.amount || '0').toString().replace(/[^0-9.-]/g, '')) || 0;
+    const t = String(tx?.type || '').toLowerCase();
+    if (t === 'income' || t === 'credit') return Math.abs(raw);
+    if (t === 'expense' || t === 'debit') return -Math.abs(raw);
+    if (String(tx?.amount || '').trim().startsWith('-')) return -Math.abs(raw);
+    return raw;
+  };
 
   // helper to convert transaction list into balance timeline
   const makeBalanceTimeline = (txs, base) => {
     // sort ascending by date
     const sorted = [...txs].sort((a,b)=>new Date(a.date) - new Date(b.date));
     let bal = base;
+    let prevBal = base;
     return sorted.map(tx=>{
-      const amt = parseFloat((tx.amount||'0').toString().replace(/[^0-9.-]/g,''))||0;
-      bal += tx.type==='income'?amt:-amt;
-      return { date: new Date(tx.date).toLocaleDateString(), balance: bal };
+      const before = bal;
+      const amt = getSignedAmount(tx);
+      bal += amt;
+      const diff = bal - before;
+      prevBal = bal;
+      const denominator = before === 0 ? 1 : Math.abs(before);
+      const pct = (diff / denominator) * 100;
+      const sign = diff >= 0 ? '+' : '';
+      const ts = new Date(tx.date).getTime();
+      return {
+        date: new Date(tx.date).toLocaleDateString(),
+        balance: bal,
+        change: `${sign}${pct.toFixed(1)}%`,
+        ts: Number.isFinite(ts) ? ts : Date.now(),
+      };
     });
   };
 
@@ -60,13 +96,27 @@ export default function BalanceHistory({ token, onBack, theme = 'dark' }) {
     async function loadData() {
       try {
         const t = await listTransactions(token);
+        const sortedAsc = [...(Array.isArray(t) ? t : [])].sort((a, b) => new Date(a.date) - new Date(b.date));
         const bres = await getBalance(token);
         const base = bres?.amount != null ? parseFloat(bres.amount) : 0;
         setInitialBalance(base);
-        const timeline = makeBalanceTimeline(t, base - t.reduce((s,tx)=>{
-          const amt = parseFloat((tx.amount||'0').toString().replace(/[^0-9.-]/g,''))||0;
-          return s + (tx.type==='income'?amt:-amt);
-        },0));
+        setAllTransactions(sortedAsc);
+        const totalDelta = sortedAsc.reduce((s, tx) => s + getSignedAmount(tx), 0);
+        const timeline = makeBalanceTimeline(sortedAsc, base - totalDelta);
+        setRecentTransactions(
+          [...sortedAsc]
+            .sort((a, b) => new Date(b.date) - new Date(a.date))
+            .map((tx) => {
+              const signed = getSignedAmount(tx);
+              return {
+                id: String(tx.id || tx.date || Math.random()),
+                title: tx.title || (signed >= 0 ? 'Credit' : 'Debit'),
+                amount: `${signed >= 0 ? '+' : '-'}$${Math.abs(signed).toLocaleString(undefined, { maximumFractionDigits: 2 })}`,
+                date: new Date(tx.date).toLocaleString(),
+                type: signed >= 0 ? 'credit' : 'debit',
+              };
+            })
+        );
         setBalanceData(timeline);
       } catch (e) {
         console.warn('could not load balance history', e);
@@ -75,33 +125,49 @@ export default function BalanceHistory({ token, onBack, theme = 'dark' }) {
     if (token) loadData();
   }, [token]);
 
-  const weeklyData = [
-    { date: 'Mon', balance: 780000, change: '+0.5%' },
-    { date: 'Tue', balance: 785000, change: '+0.6%' },
-    { date: 'Wed', balance: 782000, change: '-0.4%' },
-    { date: 'Thu', balance: 790000, change: '+1.0%' },
-    { date: 'Fri', balance: 795000, change: '+0.6%' },
-    { date: 'Sat', balance: 792000, change: '-0.4%' },
-    { date: 'Sun', balance: 782123.56, change: '-1.3%' },
-  ];
+  const weeklyData = React.useMemo(() => {
+    if (!balanceData.length) return [{ date: 'Today', balance: initialBalance, change: '0.0%' }];
+    return balanceData
+      .slice(-7)
+      .map((p) => ({
+        ...p,
+        date: new Date(p.ts).toLocaleDateString(undefined, { weekday: 'short' }),
+      }));
+  }, [balanceData, initialBalance]);
 
-  const yearlyData = [
-    { date: '2018', balance: 450000, change: '+15%' },
-    { date: '2019', balance: 580000, change: '+28%' },
-    { date: '2020', balance: 650000, change: '+12%' },
-    { date: '2021', balance: 720000, change: '+10%' },
-    { date: '2022', balance: 755000, change: '+4.8%' },
-    { date: '2023', balance: 798000, change: '+5.7%' },
-    { date: '2024', balance: 782123.56, change: '-1.9%' },
-  ];
+  const yearlyData = React.useMemo(() => {
+    if (!balanceData.length) return [{ date: String(new Date().getFullYear()), balance: initialBalance, change: '0.0%' }];
+    const byYear = new Map();
+    balanceData.forEach((p) => {
+      const y = new Date(p.ts).getFullYear();
+      byYear.set(y, p);
+    });
+    return [...byYear.entries()]
+      .sort((a, b) => a[0] - b[0])
+      .slice(-7)
+      .map(([year, p]) => ({ ...p, date: String(year) }));
+  }, [balanceData, initialBalance]);
 
-  const transactions = [
-    { id: '1', title: 'Sales Commission', amount: '+$15,000', date: 'Feb 3, 2:30 PM', type: 'credit' },
-    { id: '2', title: 'Team Expenses', amount: '-$5,200', date: 'Feb 2, 10:15 AM', type: 'debit' },
-    { id: '3', title: 'Client Payment', amount: '+$28,500', date: 'Feb 1, 4:45 PM', type: 'credit' },
-    { id: '4', title: 'Office Supplies', amount: '-$1,800', date: 'Jan 31, 9:00 AM', type: 'debit' },
-    { id: '5', title: 'Product Sale', amount: '+$42,300', date: 'Jan 30, 1:20 PM', type: 'credit' },
-  ];
+  const summary = React.useMemo(() => {
+    const inflow = allTransactions.reduce((s, tx) => {
+      const amt = getSignedAmount(tx);
+      return amt > 0 ? s + amt : s;
+    }, 0);
+    const outflow = allTransactions.reduce((s, tx) => {
+      const amt = getSignedAmount(tx);
+      return amt < 0 ? s + Math.abs(amt) : s;
+    }, 0);
+    const net = inflow - outflow;
+    const activeDays = new Set(
+      allTransactions.map((tx) => new Date(tx.date).toDateString())
+    ).size || 1;
+    return {
+      inflow,
+      outflow,
+      net,
+      avgDaily: net / activeDays,
+    };
+  }, [allTransactions]);
 
 
   const renderBalanceChart = () => {
@@ -115,22 +181,39 @@ export default function BalanceHistory({ token, onBack, theme = 'dark' }) {
       dataToUse = balanceData.length ? balanceData : [{ date: 'N/A', balance: initialBalance }];
     }
 
-    const chartDataPoints = dataToUse.map(d => d.balance / 100000);
+    const chartDataPoints = dataToUse.map((d) => {
+      const v = Number(d?.balance);
+      return Number.isFinite(v) ? v / 100000 : 0;
+    });
     const chartWidth = width - 56;
     const chartHeight = 240;
     const padding = 40;
     const innerWidth = chartWidth - 2 * padding;
     const innerHeight = chartHeight - 2 * padding;
-    const maxValue = Math.max(...chartDataPoints);
-    const minValue = Math.min(...chartDataPoints);
+    const maxValue = Math.max(...chartDataPoints, 0);
+    const minValue = Math.min(...chartDataPoints, 0);
+    const range = maxValue - minValue === 0 ? 1 : maxValue - minValue;
+    const steps = Math.max(1, chartDataPoints.length - 1);
 
     const points = chartDataPoints.map((value, index) => {
-      const x = padding + (index / (chartDataPoints.length - 1)) * innerWidth;
-      const y = padding + ((maxValue - value) / (maxValue - minValue)) * innerHeight;
+      const x = padding + (index / steps) * innerWidth;
+      const y = padding + ((maxValue - value) / range) * innerHeight;
       return { x, y, value };
     });
 
     const pathData = points.map((point, index) => `${index === 0 ? 'M' : 'L'} ${point.x} ${point.y}`).join(' ');
+
+    // Keep axis readable: short labels and limited ticks.
+    const shortLabels = dataToUse.map((item) => {
+      if (selectedPeriod === 'weekly' || selectedPeriod === 'yearly') return String(item.date);
+      const d = new Date(item.date);
+      if (Number.isNaN(d.getTime())) return String(item.date).slice(0, 5);
+      return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+    });
+
+    const maxTicks = 6;
+    const step = Math.max(1, Math.ceil(points.length / maxTicks));
+    const showLabelAt = (idx) => idx === 0 || idx === points.length - 1 || idx % step === 0;
 
     return (
       <Svg width={chartWidth} height={chartHeight}>
@@ -143,45 +226,59 @@ export default function BalanceHistory({ token, onBack, theme = 'dark' }) {
           <Circle key={index} cx={point.x} cy={point.y} r={5} fill={colors.accent} />
         ))}
 
-        {dataToUse.map((item, index) => (
-          <SvgText key={index} x={points[index].x} y={chartHeight - 10} fontSize={11} fill={colors.textMuted} textAnchor="middle">
-            {item.date.split(' ')[0]}
-          </SvgText>
+        {points.map((point, index) => (
+          showLabelAt(index) ? (
+            <SvgText key={`lbl-${index}`} x={point.x} y={chartHeight - 10} fontSize={11} fill={colors.textMuted} textAnchor="middle">
+              {shortLabels[index]}
+            </SvgText>
+          ) : null
         ))}
       </Svg>
     );
   };
 
   return (
-    <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
-      <View style={[styles.header, { borderBottomColor: colors.cardBg }]}>
-        <TouchableOpacity onPress={() => onBack?.()}>
-          <Text style={[styles.backButton, { color: colors.primary }]}>← Back</Text>
+    <View style={[styles.container, { backgroundColor: colors.background }]}>
+      <Animated.View style={[styles.header, { borderBottomColor: colors.cardBg, height: headerHeight, opacity: headerOpacity }]}>
+        <TouchableOpacity
+          style={[styles.backBtnWrap, { borderColor: colors.inputBorder || '#D8D2C5', backgroundColor: '#FFFFFF' }]}
+          onPress={() => onBack?.()}
+          activeOpacity={0.85}
+        >
+          <Text style={[styles.backButton, { color: colors.accent }]}>Back</Text>
         </TouchableOpacity>
         <Text style={[styles.headerTitle, { color: colors.textPrimary }]}>Balance History</Text>
         <View style={{ width: 40 }} />
-      </View>
+      </Animated.View>
 
-      <ScrollView style={{ flex: 1 }} showsVerticalScrollIndicator={false}>
+      <Animated.ScrollView
+        style={{ flex: 1 }}
+        showsVerticalScrollIndicator={false}
+        onScroll={Animated.event(
+          [{ nativeEvent: { contentOffset: { y: scrollY } } }],
+          { useNativeDriver: false }
+        )}
+        scrollEventThrottle={16}
+      >
         {/* Current Balance Card */}
         <View style={[styles.balanceCard, { backgroundColor: colors.cardBg }]}>
           <View>
-            <Text style={[styles.label, { color: colors.textMuted }]}>Current Balance</Text>
+            <Text style={[styles.label, { color: '#4B5563' }]}>Current Balance</Text>
             <Text style={[styles.amount, { color: colors.textPrimary }]}>{`$${initialBalance.toFixed(2)}`}</Text>
             <View style={styles.changeRow}>
               {/* change percentage could be computed, for now static */}
               <Text style={[styles.positive, { color: colors.positive }]}>↑ +1.7%</Text>
-              <Text style={[styles.dateText, { color: colors.textMuted }]}>This month</Text>
+              <Text style={[styles.dateText, { color: '#4B5563' }]}>This month</Text>
             </View>
           </View>
           <View style={styles.stats}>
             <View style={styles.statItem}>
               <Text style={[styles.statValue, { color: colors.positive }]}>{`$${(balanceData.length?Math.max(...balanceData.map(d=>d.balance)):initialBalance).toFixed(2)}`}</Text>
-              <Text style={[styles.statLabel, { color: colors.textMuted }]}>Peak</Text>
+              <Text style={[styles.statLabel, { color: '#4B5563' }]}>Peak</Text>
             </View>
             <View style={styles.statItem}>
               <Text style={[styles.statValue, { color: colors.negative }]}>{`$${(balanceData.length?Math.min(...balanceData.map(d=>d.balance)):initialBalance).toFixed(2)}`}</Text>
-              <Text style={[styles.statLabel, { color: colors.textMuted }]}>Low</Text>
+              <Text style={[styles.statLabel, { color: '#4B5563' }]}>Low</Text>
             </View>
           </View>
         </View>
@@ -230,8 +327,8 @@ export default function BalanceHistory({ token, onBack, theme = 'dark' }) {
               </View>
               <View style={styles.balanceInfo}>
                 <Text style={[styles.balanceText, { color: colors.textPrimary }]}>${(item.balance / 1000).toFixed(0)}k</Text>
-                <Text style={[styles.changeText, { color: item.change.includes('+') ? colors.positive : colors.negative }]}>
-                  {item.change}
+                <Text style={[styles.changeText, { color: String(item.change || '').includes('+') ? colors.positive : colors.negative }]}>
+                  {item.change || '0.0%'}
                 </Text>
               </View>
             </View>
@@ -241,7 +338,7 @@ export default function BalanceHistory({ token, onBack, theme = 'dark' }) {
               style={[styles.showMoreButton, { backgroundColor: colors.primary }]}
               onPress={() => setShowMoreTimeline(true)}
             >
-              <Text style={[styles.showMoreText, { color: colors.textPrimary === '#1F2937' ? '#F0EDE5' : '#04222b' }]}>Show More</Text>
+              <Text style={[styles.showMoreText, { color: '#F0EDE5' }]}>Show More</Text>
             </TouchableOpacity>
           )}
           {showMoreTimeline && balanceData.length > 4 && (
@@ -249,7 +346,7 @@ export default function BalanceHistory({ token, onBack, theme = 'dark' }) {
               style={[styles.showMoreButton, { backgroundColor: colors.primary }]}
               onPress={() => setShowMoreTimeline(false)}
             >
-              <Text style={[styles.showMoreText, { color: colors.textPrimary === '#1F2937' ? '#F0EDE5' : '#04222b' }]}>Show Less</Text>
+              <Text style={[styles.showMoreText, { color: '#F0EDE5' }]}>Show Less</Text>
             </TouchableOpacity>
           )}
         </View>
@@ -257,11 +354,11 @@ export default function BalanceHistory({ token, onBack, theme = 'dark' }) {
         {/* Recent Transactions */}
         <View style={[styles.transactionsCard, { backgroundColor: colors.cardBg }]}>
           <Text style={[styles.cardTitle, { color: colors.textPrimary }]}>Recent Transactions</Text>
-          {transactions.slice(0, showMoreTransactions ? transactions.length : 3).map((txn) => (
+          {recentTransactions.slice(0, showMoreTransactions ? recentTransactions.length : 3).map((txn) => (
             <View key={txn.id} style={[styles.txnItem, { borderBottomColor: colors.background }]}>
               <View>
                 <Text style={[styles.txnTitle, { color: colors.textPrimary }]}>{txn.title}</Text>
-                <Text style={[styles.txnDate, { color: colors.textMuted }]}>{txn.date}</Text>
+                <Text style={[styles.txnDate, { color: '#4B5563' }]}>{txn.date}</Text>
               </View>
               <Text
                 style={[
@@ -273,20 +370,20 @@ export default function BalanceHistory({ token, onBack, theme = 'dark' }) {
               </Text>
             </View>
           ))}
-          {!showMoreTransactions && transactions.length > 3 && (
+          {!showMoreTransactions && recentTransactions.length > 3 && (
             <TouchableOpacity
               style={[styles.showMoreButton, { backgroundColor: colors.primary }]}
               onPress={() => setShowMoreTransactions(true)}
             >
-              <Text style={[styles.showMoreText, { color: colors.textPrimary === '#1F2937' ? '#F0EDE5' : '#04222b' }]}>Show More</Text>
+              <Text style={[styles.showMoreText, { color: '#F0EDE5' }]}>Show More</Text>
             </TouchableOpacity>
           )}
-          {showMoreTransactions && transactions.length > 3 && (
+          {showMoreTransactions && recentTransactions.length > 3 && (
             <TouchableOpacity
               style={[styles.showMoreButton, { backgroundColor: colors.primary }]}
               onPress={() => setShowMoreTransactions(false)}
             >
-              <Text style={[styles.showMoreText, { color: colors.textPrimary === '#1F2937' ? '#F0EDE5' : '#04222b' }]}>Show Less</Text>
+              <Text style={[styles.showMoreText, { color: '#F0EDE5' }]}>Show Less</Text>
             </TouchableOpacity>
           )}
         </View>
@@ -296,27 +393,35 @@ export default function BalanceHistory({ token, onBack, theme = 'dark' }) {
           <Text style={[styles.cardTitle, { color: colors.textPrimary }]}>Summary</Text>
           <View style={styles.summaryRow}>
             <View style={styles.summaryItem}>
-              <Text style={[styles.summaryLabel, { color: colors.textMuted }]}>Total Inflow</Text>
-              <Text style={[styles.summaryValue, { color: colors.positive }]}>$85,800</Text>
+              <Text style={[styles.summaryLabel, { color: '#4B5563' }]}>Total Inflow</Text>
+              <Text style={[styles.summaryValue, { color: colors.positive }]}>
+                ${summary.inflow.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+              </Text>
             </View>
             <View style={styles.summaryItem}>
-              <Text style={[styles.summaryLabel, { color: colors.textMuted }]}>Total Outflow</Text>
-              <Text style={[styles.summaryValue, { color: colors.negative }]}>$7,000</Text>
+              <Text style={[styles.summaryLabel, { color: '#4B5563' }]}>Total Outflow</Text>
+              <Text style={[styles.summaryValue, { color: colors.negative }]}>
+                ${summary.outflow.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+              </Text>
             </View>
           </View>
           <View style={styles.summaryRow}>
             <View style={styles.summaryItem}>
-              <Text style={[styles.summaryLabel, { color: colors.textMuted }]}>Net Change</Text>
-              <Text style={[styles.summaryValue, { color: colors.positive }]}>+$78,800</Text>
+              <Text style={[styles.summaryLabel, { color: '#4B5563' }]}>Net Change</Text>
+              <Text style={[styles.summaryValue, { color: summary.net >= 0 ? colors.positive : colors.negative }]}>
+                {summary.net >= 0 ? '+' : '-'}${Math.abs(summary.net).toLocaleString(undefined, { maximumFractionDigits: 2 })}
+              </Text>
             </View>
             <View style={styles.summaryItem}>
-              <Text style={[styles.summaryLabel, { color: colors.textMuted }]}>Avg Daily</Text>
-              <Text style={[styles.summaryValue, { color: colors.textPrimary }]}>+$11,257</Text>
+              <Text style={[styles.summaryLabel, { color: '#4B5563' }]}>Avg Daily</Text>
+              <Text style={[styles.summaryValue, { color: colors.textPrimary }]}>
+                {summary.avgDaily >= 0 ? '+' : '-'}${Math.abs(summary.avgDaily).toLocaleString(undefined, { maximumFractionDigits: 2 })}
+              </Text>
             </View>
           </View>
         </View>
-      </ScrollView>
-    </SafeAreaView>
+      </Animated.ScrollView>
+    </View>
   );
 }
 
@@ -329,16 +434,30 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
     paddingHorizontal: 20,
-    paddingVertical: 12,
+    paddingVertical: 18,
+    backgroundColor: '#F0EDE5',
+    borderBottomLeftRadius: 18,
+    borderBottomRightRadius: 18,
     borderBottomWidth: 1,
+    overflow: 'hidden',
+  },
+  backBtnWrap: {
+    minWidth: 72,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 14,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   backButton: {
-    fontSize: 18,
-    fontWeight: '600',
+    fontSize: 13,
+    fontWeight: '700',
   },
   headerTitle: {
     fontSize: 20,
     fontWeight: '700',
+    marginTop: 1,
   },
   balanceCard: {
     margin: 20,
@@ -509,4 +628,5 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
 });
+
 

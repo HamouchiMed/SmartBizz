@@ -153,11 +153,7 @@ export default function NotificationsSettings({ theme = 'dark', onNavigateToDash
           </TouchableOpacity>
           <TouchableOpacity style={styles.navItem} onPress={() => onNavigateToAnalytics?.()}>
             <Text style={[styles.navText, { color: colors.textMuted }]}>Analytics</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={[styles.navItem, styles.activeNav, { backgroundColor: colors.primary }]} onPress={() => onNavigateToProfile?.()}>
-            <Text style={[styles.navText, styles.activeNavText, { color: colors.textPrimary === '#1F2937' ? '#F0EDE5' : '#04222b' }]}>Profile</Text>
-          </TouchableOpacity>
-        </View>
+          </TouchableOpacity></View>
       </View>
     </View>
   );
@@ -196,10 +192,12 @@ const styles = StyleSheet.create({
   },
   bottomNavBlur: { ...StyleSheet.absoluteFillObject },
   bottomNavHighlight: { height: 1, backgroundColor: 'rgba(255,255,255,0.25)' },
-  bottomNav: { flexDirection: 'row', paddingVertical: 12, paddingHorizontal: 20, backgroundColor: 'rgba(15, 23, 36, 0.35)' },
+  bottomNav: { flexDirection: 'row', paddingVertical: 12, paddingHorizontal: 20, backgroundColor: 'transparent' },
   navItem: { flex: 1, alignItems: 'center', paddingVertical: 4 },
   activeNav: { borderRadius: 12, paddingHorizontal: 8 },
   navText: { fontSize: 12, fontWeight: '500' },
   activeNavText: { fontWeight: '700' },
 });
+
+
 

@@ -61,10 +61,10 @@ export default function Notifications({ onBack, theme = "dark" }) {
             </View>
             <View style={styles.notificationContent}>
               <Text style={[styles.notificationTitle, { color: colors.textPrimary }]}>{notification.title}</Text>
-              <Text style={[styles.notificationSubtitle, { color: colors.textMuted }]}>{notification.subtitle}</Text>
-              {notification.message && <Text style={[styles.notificationMessage, { color: colors.textMuted }]}>{notification.message}</Text>}
+              <Text style={[styles.notificationSubtitle, { color: '#4B5563' }]}>{notification.subtitle}</Text>
+              {notification.message && <Text style={[styles.notificationMessage, { color: '#4B5563' }]}>{notification.message}</Text>}
             </View>
-            <Text style={[styles.notificationTime, { color: colors.textMuted }]}>{notification.time}</Text>
+            <Text style={[styles.notificationTime, { color: '#4B5563' }]}>{notification.time}</Text>
           </TouchableOpacity>
         ))}
       </ScrollView>
@@ -132,4 +132,5 @@ const styles = StyleSheet.create({
     marginTop: 2,
   },
 });
+
 

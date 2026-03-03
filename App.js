@@ -30,10 +30,6 @@ import Onboarding from './screens/Onboarding';
 import { login, register, getMe } from './services/api';
 
 export default function App() {
-  if (typeof global.__API_BASE_URL__ !== 'string' || !global.__API_BASE_URL__) {
-    global.__API_BASE_URL__ = 'http://192.168.10.167:3001';
-  }
-
   const routeState = React.useState('welcome');
   const [route, setRoute] = routeState;
   const fadeAnim = useRef(new Animated.Value(1)).current;
@@ -48,26 +44,22 @@ export default function App() {
   // auto-detect API host so physical devices / emulators don't need manual config
   useEffect(() => {
     try {
-      if (typeof global.__API_BASE_URL__ === 'string' && global.__API_BASE_URL__) {
-        console.log('? API host override already set:', global.__API_BASE_URL__);
-        return;
-      }
-
       // allow manual override: set global.__MANUAL_API_HOST__ = 'http://192.168.x.y:3001' before app loads
       if (typeof global.__MANUAL_API_HOST__ === 'string' && global.__MANUAL_API_HOST__) {
         global.__API_BASE_URL__ = global.__MANUAL_API_HOST__;
-        console.log('? Using manual API host:', global.__API_BASE_URL__);
+        console.log('Using manual API host:', global.__API_BASE_URL__);
         return;
       }
 
       // log Constants to debug
-      console.log('?? Constants.manifest:', {
+      console.log('Constants host info:', {
+        hostUri: Constants?.expoConfig?.hostUri,
         debuggerHost: Constants?.manifest?.debuggerHost,
-        packagerOpts: Constants?.manifest?.packagerOpts,
       });
 
-      // try multiple sources for debugger host (expo dev server IP)
+      // try multiple sources for dev host (Expo SDK 54+ and older)
       let dbg = 
+        Constants?.expoConfig?.hostUri ||
         Constants?.manifest?.debuggerHost || 
         Constants?.manifest?.packagerOpts?.host || 
         Constants?.manifest2?.debuggerHost ||
@@ -77,21 +69,24 @@ export default function App() {
       const candidates = [];
       if (dbg && typeof dbg === 'string') {
         const ip = dbg.split(':')[0];
-        console.log('?? Extracted debugger IP:', ip);
+        console.log('Extracted dev host IP:', ip);
         candidates.push(`http://${ip}:3001`);
       } else {
-        console.log('?? No debugger host found in Constants');
+        console.log('No debugger host found in Constants');
       }
 
       // explicit LAN fallback for physical devices on same Wi-Fi
       candidates.push('http://192.168.10.167:3001');
+      candidates.push('http://192.168.1.14:3001');
 
       // emulator defaults
       if (Platform.OS === 'android') candidates.push('http://10.0.2.2:3001');
       // localhost for simulator / desktop
       candidates.push('http://localhost:3001');
 
-      console.log('?? Candidate hosts:', candidates);
+      // dedupe while preserving order
+      const uniqueCandidates = [...new Set(candidates)];
+      console.log('Candidate hosts:', uniqueCandidates);
 
       // helper to test reachability with timeout
       const testHost = async (url, timeout = 2000) => {
@@ -109,25 +104,25 @@ export default function App() {
       };
 
       const findWorkingHost = async () => {
-        for (const c of candidates) {
-          console.log(`?? Testing ${c}...`);
+        for (const c of uniqueCandidates) {
+          console.log(`Testing ${c}...`);
           const ok = await testHost(c);
           if (ok) {
             global.__API_BASE_URL__ = c;
-            console.log('? Auto-detected API host:', c);
+            console.log('Auto-detected API host:', c);
             return;
           }
         }
         // fallback: set first candidate (best-effort)
-        if (candidates.length > 0) {
-          global.__API_BASE_URL__ = candidates[0];
-          console.warn('?? Could not probe API hosts; defaulting to', candidates[0]);
+        if (uniqueCandidates.length > 0) {
+          global.__API_BASE_URL__ = uniqueCandidates[0];
+          console.warn('Could not probe API hosts; defaulting to', uniqueCandidates[0]);
         }
       };
 
       findWorkingHost();
     } catch (e) {
-      console.warn('? API host auto-detect failed, using defaults:', e.message);
+      console.warn('API host auto-detect failed, using defaults:', e.message);
     }
   }, []);
 
@@ -366,6 +361,7 @@ export default function App() {
         />
       ) : route === 'analytics' ? (
         <Analytics
+          token={authToken}
           onBack={() => setRoute('dashboard')}
           theme={theme}
           onNavigateToDashboard={() => setRoute('dashboard')}
@@ -449,6 +445,7 @@ export default function App() {
         />
       ) : (
         <Dashboard 
+          token={authToken}
           onLogout={async () => { setAuthToken(null); setAuthUser(null); setRoute('login'); try { await AsyncStorage.removeItem('authToken'); await AsyncStorage.removeItem('authUser'); } catch {} }} 
           theme={theme} 
           showChecklist={!onboardingComplete}

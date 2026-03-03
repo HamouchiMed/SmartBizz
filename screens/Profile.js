@@ -12,7 +12,6 @@ import {
   KeyboardAvoidingView,
   Platform,
 } from 'react-native';
-import { BlurView } from 'expo-blur';
 import * as ImagePicker from 'expo-image-picker';
 import { listProfiles, createProfile, updateProfile } from '../services/api';
 
@@ -145,6 +144,9 @@ export default function Profile({ theme = 'dark', onNavigateToDashboard, onNavig
   return (
     <View style={[styles.container, { backgroundColor: colors.background }]}> 
       <View style={styles.header}>
+        <TouchableOpacity style={[styles.backBtn, { backgroundColor: colors.cardBg }]} onPress={() => onNavigateToDashboard?.()}>
+          <Text style={[styles.backText, { color: colors.accent }]}>Go Back</Text>
+        </TouchableOpacity>
         <Text style={[styles.title, { color: colors.textPrimary }]}>Profile</Text>
         <TouchableOpacity style={[styles.editBtn, { backgroundColor: colors.cardBg }]} onPress={openEdit}>
           <Text style={[styles.editText, { color: colors.accent }]}>Edit</Text>
@@ -187,27 +189,6 @@ export default function Profile({ theme = 'dark', onNavigateToDashboard, onNavig
         </View>
       </ScrollView>
 
-      <View style={styles.bottomNavContainer}>
-        <BlurView intensity={45} tint={theme === 'dark' ? 'dark' : 'light'} style={styles.bottomNavBlur} pointerEvents="none" />
-        <View style={styles.bottomNavHighlight} />
-        <View style={[styles.bottomNav, { backgroundColor: 'transparent' }]}> 
-          <TouchableOpacity style={styles.navItem} onPress={() => onNavigateToDashboard?.()}>
-            <Text style={[styles.navText, { color: colors.textMuted }]}>Home</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={styles.navItem} onPress={() => onNavigateToWallet?.()}>
-            <Text style={[styles.navText, { color: colors.textMuted }]}>Wallet</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={styles.navItem} onPress={() => onNavigateToEvents?.()}>
-            <Text style={[styles.navText, { color: colors.textMuted }]}>Events</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={styles.navItem} onPress={() => onNavigateToAnalytics?.()}>
-            <Text style={[styles.navText, { color: colors.textMuted }]}>Analytics</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={[styles.navItem, styles.activeNav, { backgroundColor: colors.primary }]}>
-            <Text style={[styles.navText, styles.activeNavText, { color: colors.textPrimary === '#1F2937' ? '#F0EDE5' : '#04222b' }]}>Profile</Text>
-          </TouchableOpacity>
-        </View>
-      </View>
 
       <Modal visible={editVisible} transparent animationType="fade" onRequestClose={() => setEditVisible(false)}>
         <View style={styles.modalBackdrop}>
@@ -267,7 +248,20 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: '700',
   },
+  backBtn: {
+    minWidth: 74,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 12,
+    alignItems: 'center',
+  },
+  backText: {
+    fontSize: 12,
+    fontWeight: '700',
+  },
   editBtn: {
+    minWidth: 74,
+    alignItems: 'center',
     paddingHorizontal: 12,
     paddingVertical: 6,
     borderRadius: 12,
@@ -386,7 +380,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     paddingVertical: 12,
     paddingHorizontal: 20,
-    backgroundColor: 'rgba(15, 23, 36, 0.35)',
+    backgroundColor: 'transparent',
   },
   navItem: {
     flex: 1,
@@ -461,4 +455,6 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
 });
+
+
 

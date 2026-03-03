@@ -114,3 +114,15 @@ CREATE TABLE IF NOT EXISTS balances (
   amount NUMERIC DEFAULT 0,
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
+
+-- analytics snapshots used by Analytics screen cards
+CREATE TABLE IF NOT EXISTS analytics_metrics (
+  id SERIAL PRIMARY KEY,
+  user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+  period_label TEXT DEFAULT 'weekly',
+  revenue NUMERIC DEFAULT 0,
+  new_leads INTEGER DEFAULT 0,
+  churn NUMERIC DEFAULT 0,
+  avg_deal NUMERIC DEFAULT 0,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);

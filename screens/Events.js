@@ -12,6 +12,7 @@ import {
   Platform,
 } from 'react-native';
 import { BlurView } from 'expo-blur';
+import { Ionicons } from '@expo/vector-icons';
 import { listEvents, createEvent, updateEvent, deleteEvent } from '../services/api';
 
 const categoryColors = ['#065f46', '#3b82f6', '#22c55e', '#f59e0b', '#ef4444'];
@@ -247,7 +248,7 @@ export default function Events({ onBack, theme = 'dark', onNavigateToDashboard, 
 
   return (
     <View style={[styles.container, { backgroundColor: colors.background }]}> 
-      <View style={styles.header}>
+      <View style={[styles.header, { borderBottomColor: colors.cardBg }]}>
         <Text style={[styles.title, { color: colors.textPrimary }]}>Events</Text>
         <View style={styles.headerActions}>
           <TouchableOpacity onPress={() => Alert.alert('Sync', 'Sync with calendar providers soon.')}> 
@@ -262,14 +263,14 @@ export default function Events({ onBack, theme = 'dark', onNavigateToDashboard, 
       <View style={[styles.heroCard, { backgroundColor: colors.cardBg }]}> 
         <View style={styles.monthRow}>
           <TouchableOpacity onPress={onPrevMonth} style={styles.monthBtn}>
-            <Text style={[styles.monthBtnText, { color: colors.accent }]}>‹</Text>
+            <Ionicons name="chevron-back" size={18} color={colors.accent} />
           </TouchableOpacity>
           <View>
             <Text style={[styles.heroTitle, { color: colors.textPrimary }]}>{monthLabel}</Text>
             <Text style={[styles.heroSubtitle, { color: colors.textMuted }]}>{monthEvents.length} events scheduled</Text>
           </View>
           <TouchableOpacity onPress={onNextMonth} style={styles.monthBtn}>
-            <Text style={[styles.monthBtnText, { color: colors.accent }]}>›</Text>
+            <Ionicons name="chevron-forward" size={18} color={colors.accent} />
           </TouchableOpacity>
         </View>
 
@@ -357,11 +358,7 @@ export default function Events({ onBack, theme = 'dark', onNavigateToDashboard, 
           </TouchableOpacity>
           <TouchableOpacity style={styles.navItem} onPress={() => onNavigateToAnalytics?.()}>
             <Text style={[styles.navText, { color: colors.textMuted }]}>Analytics</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={styles.navItem} onPress={() => onNavigateToProfile?.()}>
-            <Text style={[styles.navText, { color: colors.textMuted }]}>Profile</Text>
-          </TouchableOpacity>
-        </View>
+          </TouchableOpacity></View>
       </View>
 
       <Modal visible={modalVisible} transparent animationType="fade" onRequestClose={() => setModalVisible(false)}>
@@ -486,16 +483,24 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
   },
-  header: {
+  header:
+  {
     flexDirection: 'row',
+    justifyContent: 'space-between',
     alignItems: 'center',
     paddingHorizontal: 20,
-    paddingTop: 30,
-    paddingBottom: 14,
+    paddingVertical: 20,
+    backgroundColor: '#F0EDE5',
+    borderBottomLeftRadius: 18,
+    borderBottomRightRadius: 18,
+    borderBottomWidth: 1,
+    marginBottom: 30,
   },
-  title: {
-    fontSize: 18,
+  title:
+  {
+    fontSize: 20,
     fontWeight: '700',
+    marginTop: 6,
   },
   headerActions: {
     marginLeft: 'auto',
@@ -686,7 +691,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     paddingVertical: 12,
     paddingHorizontal: 20,
-    backgroundColor: 'rgba(15, 23, 36, 0.35)',
+    backgroundColor: 'transparent',
   },
   navItem: {
     flex: 1,
@@ -726,13 +731,13 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     paddingHorizontal: 12,
     paddingVertical: 10,
-    marginBottom: 10,
+    marginBottom: 20,
     fontSize: 14,
   },
   modalRow: {
     flexDirection: 'row',
     gap: 8,
-    marginBottom: 10,
+    marginBottom: 20,
   },
   modalHalf: {
     flex: 1,
@@ -763,4 +768,16 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
 });
+
+
+
+
+
+
+
+
+
+
+
+
 

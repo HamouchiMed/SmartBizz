@@ -28,7 +28,7 @@ async function seed() {
   const hash = await bcrypt.hash(password, 10);
 
   const userRes = await pool.query(
-    'INSERT INTO users (name, email, password_hash) VALUES ($1,$2,$3) ON CONFLICT (email) DO UPDATE SET name=EXCLUDED.name RETURNING id',
+    'INSERT INTO users (name, email, password_hash) VALUES ($1,$2,$3) ON CONFLICT (email) DO UPDATE SET name=EXCLUDED.name, password_hash=EXCLUDED.password_hash RETURNING id',
     [name, email, hash]
   );
   const userId = userRes.rows[0].id;
@@ -91,6 +91,16 @@ async function seed() {
   await pool.query(
     'INSERT INTO balances (user_id, amount) VALUES ($1,$2) ON CONFLICT (user_id) DO UPDATE SET amount = EXCLUDED.amount',
     [userId, 24881.00]
+  );
+
+  // seed analytics metric snapshots
+  await pool.query(
+    'INSERT INTO analytics_metrics (user_id, period_label, revenue, new_leads, churn, avg_deal) VALUES ($1,$2,$3,$4,$5,$6)',
+    [userId, 'weekly', 128450, 1240, 3.2, 9850]
+  );
+  await pool.query(
+    'INSERT INTO analytics_metrics (user_id, period_label, revenue, new_leads, churn, avg_deal) VALUES ($1,$2,$3,$4,$5,$6)',
+    [userId, 'monthly', 452300, 4310, 2.9, 10120]
   );
 
   console.log('Seed complete. Demo user: demo@smartbizz.ma / password123');

@@ -4,8 +4,7 @@ import { Platform } from 'react-native';
 // 1) runtime override: global.__API_BASE_URL__
 // 2) Expo env: EXPO_PUBLIC_API_URL
 // 3) platform fallback
-const LAN_FALLBACK = 'http://192.168.10.167:3001';
-const DEFAULT_HOST = Platform.OS === 'android' ? 'http://10.0.2.2:3001' : LAN_FALLBACK;
+const DEFAULT_HOST = Platform.OS === 'android' ? 'http://10.0.2.2:3001' : 'http://localhost:3001';
 
 function getApiBase() {
   if (typeof global.__API_BASE_URL__ === 'string' && global.__API_BASE_URL__) return global.__API_BASE_URL__;
@@ -82,6 +81,22 @@ export async function updateLead(token, id, payload) {
 
 export async function deleteLead(token, id) {
   return request(`/leads/${id}`, { method: 'DELETE', token });
+}
+
+export async function listAnalyticsMetrics(token) {
+  return request('/analytics_metrics', { token });
+}
+
+export async function createAnalyticsMetric(token, payload) {
+  return request('/analytics_metrics', { method: 'POST', token, body: payload });
+}
+
+export async function updateAnalyticsMetric(token, id, payload) {
+  return request(`/analytics_metrics/${id}`, { method: 'PUT', token, body: payload });
+}
+
+export async function deleteAnalyticsMetric(token, id) {
+  return request(`/analytics_metrics/${id}`, { method: 'DELETE', token });
 }
 
 export async function listProfiles(token) {

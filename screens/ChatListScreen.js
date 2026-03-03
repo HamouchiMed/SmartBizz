@@ -173,7 +173,7 @@ export default function ChatListScreen({ onSelectChat, onBack, theme = 'dark' })
           <Text style={[styles.conversationName, { color: colors.textPrimary }]}>
             {item.name}
           </Text>
-          <Text style={[styles.timestamp, { color: colors.textMuted }]}>
+          <Text style={[styles.timestamp, { color: '#4B5563' }]}>
             {item.timestamp}
           </Text>
         </View>
@@ -205,7 +205,7 @@ export default function ChatListScreen({ onSelectChat, onBack, theme = 'dark' })
       <View style={[styles.header, { backgroundColor: colors.background, borderBottomColor: colors.border }]}>
         <View style={styles.headerTop}>
           <TouchableOpacity onPress={onBack} style={styles.backButton}>
-            <Text style={[styles.backText, { color: colors.textMuted }]}>←</Text>
+            <Text style={[styles.backText, { color: '#4B5563' }]}>←</Text>
           </TouchableOpacity>
           <Text style={[styles.headerTitle, { color: colors.textPrimary }]}>Messages</Text>
           <TouchableOpacity style={styles.addBtnWrap} onPress={() => setShowNewChat(true)} activeOpacity={0.9}>
@@ -302,7 +302,7 @@ export default function ChatListScreen({ onSelectChat, onBack, theme = 'dark' })
                   }}
                 >
                   <Text style={[styles.modalItemText, { color: colors.textPrimary }]}>{item.name}</Text>
-                  <Text style={[styles.modalItemSub, { color: colors.textMuted }]}>{item.phone}</Text>
+                  <Text style={[styles.modalItemSub, { color: '#4B5563' }]}>{item.phone}</Text>
                 </TouchableOpacity>
               )}
             />
@@ -324,7 +324,7 @@ export default function ChatListScreen({ onSelectChat, onBack, theme = 'dark' })
           <Text style={[styles.emptyStateText, { color: colors.textPrimary }]}>
             No conversations found
           </Text>
-          <Text style={[styles.emptyStateSubtext, { color: colors.textMuted }]}>
+          <Text style={[styles.emptyStateSubtext, { color: '#4B5563' }]}>
             {searchText ? 'Try a different search' : 'Start a new conversation'}
           </Text>
         </View>
@@ -517,4 +517,5 @@ const styles = StyleSheet.create({
     fontSize: 14,
   },
 });
+
 

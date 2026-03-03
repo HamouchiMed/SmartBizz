@@ -18,10 +18,11 @@ import {
 import Svg, { Path, Line, Circle, Text as SvgText, Rect } from 'react-native-svg';
 import { BlurView } from 'expo-blur';
 import { Ionicons } from '@expo/vector-icons';
+import { listDeals, listLeads, getBalance, listEvents, createEvent, deleteEvent } from '../services/api';
 
 const { width } = Dimensions.get('window');
 
-export default function Dashboard({ onLogout, theme = 'dark', onToggleTheme, onNavigateToBalance, onNavigateToLead, onNavigateToContact, onNavigateToProduct, onNavigateToDeal, onNavigateToMessages, onNavigateToWallet, onNavigateToAnalytics, onNavigateToEvents, onNavigateToProfile, onNavigateToBilling, onNavigateToNotifications }) {
+export default function Dashboard({ token, onLogout, theme = 'dark', onToggleTheme, onNavigateToBalance, onNavigateToLead, onNavigateToContact, onNavigateToProduct, onNavigateToDeal, onNavigateToMessages, onNavigateToWallet, onNavigateToAnalytics, onNavigateToEvents, onNavigateToProfile, onNavigateToBilling, onNavigateToNotifications }) {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [drawerVisible, setDrawerVisible] = useState(false);
   const [searchVisible, setSearchVisible] = useState(false);
@@ -32,29 +33,156 @@ export default function Dashboard({ onLogout, theme = 'dark', onToggleTheme, onN
   const [newEventTitle, setNewEventTitle] = useState('');
   const [newEventDate, setNewEventDate] = useState('');
   const [newEventLocation, setNewEventLocation] = useState('');
+  const [metrics, setMetrics] = useState({
+    closingDeals: 0,
+    totalAmount: 0,
+    holdingDeals: 0,
+    inProgress: 0,
+  });
+  const [totalBalance, setTotalBalance] = useState(0);
+  const [activeSalesSeries, setActiveSalesSeries] = useState([0, 0, 0, 0, 0, 0, 0]);
+  const [activeSalesLabels, setActiveSalesLabels] = useState(['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul']);
+  const [activeSalesTotal, setActiveSalesTotal] = useState(0);
+  const [statsSeries, setStatsSeries] = useState([0, 0, 0, 0, 0, 0]);
+  const [statsLabels, setStatsLabels] = useState(['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun']);
   const slideAnim = useRef(new Animated.Value(-300)).current;
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const mainAnim = useRef(new Animated.Value(0)).current;
-  const [events, setEvents] = useState([
-    {
-      id: '1',
-      title: 'Client Meeting - Tech Corp',
-      date: 'Jan 15, 2026 - 2:00 PM',
-      location: 'Conference Room A',
-    },
-    {
-      id: '2',
-      title: 'Product Demo - StartupXYZ',
-      date: 'Jan 18, 2026 - 10:00 AM',
-      location: 'Virtual Meeting',
-    },
-    {
-      id: '3',
-      title: 'Team Review Session',
-      date: 'Jan 20, 2026 - 3:00 PM',
-      location: 'Main Office',
-    },
-  ]);
+  const [events, setEvents] = useState([]);
+
+  const parseAmount = (value) => {
+    if (typeof value === 'number') return value;
+    if (!value) return 0;
+    const raw = String(value).trim().toLowerCase();
+    const mult = raw.includes('m') ? 1000000 : raw.includes('k') ? 1000 : 1;
+    const n = parseFloat(raw.replace(/[^0-9.-]/g, '')) || 0;
+    return n * mult;
+  };
+
+  const formatEventDate = (iso) => {
+    if (!iso) return 'Date TBD';
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return String(iso);
+    return d.toLocaleString(undefined, {
+      month: 'short',
+      day: 'numeric',
+      year: 'numeric',
+      hour: 'numeric',
+      minute: '2-digit',
+    });
+  };
+
+  const toIsoOrNow = (input) => {
+    if (!input || !input.trim()) return new Date().toISOString();
+    const d = new Date(input);
+    if (Number.isNaN(d.getTime())) return new Date().toISOString();
+    return d.toISOString();
+  };
+
+  const loadEvents = async () => {
+    if (!token) {
+      setEvents([]);
+      return;
+    }
+    try {
+      const rows = await listEvents(token);
+      const mapped = (Array.isArray(rows) ? rows : []).map((e) => ({
+        id: String(e.id),
+        title: e.title || 'Untitled Event',
+        date: formatEventDate(e.datetime),
+        location: e.location || 'Location TBD',
+      }));
+      setEvents(mapped);
+    } catch (err) {
+      console.warn('Failed to load dashboard events', err?.message || err);
+    }
+  };
+
+  const loadMetrics = async () => {
+    if (!token) {
+      setMetrics({ closingDeals: 0, totalAmount: 0, holdingDeals: 0, inProgress: 0 });
+      return;
+    }
+    try {
+      const [deals, leads, balRes] = await Promise.all([listDeals(token), listLeads(token), getBalance(token)]);
+      const safeDeals = Array.isArray(deals) ? deals : [];
+      const safeLeads = Array.isArray(leads) ? leads : [];
+      const closingDeals = safeDeals.filter((d) => {
+        const s = String(d?.status || '').toLowerCase();
+        return s.includes('closing') || s.includes('closed');
+      }).length;
+      const inProgress = safeDeals.filter((d) => String(d?.status || '').toLowerCase().includes('in progress')).length;
+      const holdingDeals = safeDeals.filter((d) => {
+        const s = String(d?.status || '').toLowerCase();
+        return s.includes('hold') || s.includes('holding') || s.includes('pending');
+      }).length || safeLeads.length;
+
+      const sumDeals = safeDeals.reduce((sum, d) => sum + parseAmount(d?.amount), 0);
+      const bal = parseFloat(balRes?.amount || 0);
+      const safeBalance = Number.isFinite(bal) ? bal : 0;
+      const totalAmount = sumDeals > 0 ? sumDeals : (Number.isFinite(bal) ? bal : 0);
+      setTotalBalance(safeBalance);
+
+      // Active sales chart: aggregate deal amounts across last 7 months
+      const monthPoints = [];
+      const monthLabels = [];
+      for (let i = 6; i >= 0; i -= 1) {
+        const d = new Date();
+        d.setDate(1);
+        d.setMonth(d.getMonth() - i);
+        monthPoints.push({ year: d.getFullYear(), month: d.getMonth(), value: 0 });
+        monthLabels.push(d.toLocaleString(undefined, { month: 'short' }));
+      }
+      safeDeals.forEach((deal) => {
+        const amount = parseAmount(deal?.amount);
+        if (!Number.isFinite(amount) || amount <= 0) return;
+        const src = deal?.close_date || deal?.dueDate || deal?.created_at;
+        const dt = src ? new Date(src) : null;
+        if (!dt || Number.isNaN(dt.getTime())) return;
+        const idx = monthPoints.findIndex((m) => m.year === dt.getFullYear() && m.month === dt.getMonth());
+        if (idx >= 0) monthPoints[idx].value += amount;
+      });
+      const series = monthPoints.map((m) => Math.round(m.value));
+      const total = series.reduce((a, b) => a + b, 0);
+      setActiveSalesSeries(series);
+      setActiveSalesLabels(monthLabels);
+      setActiveSalesTotal(total);
+
+      // Statistics chart: monthly CRM activity (leads + deals) across last 6 months
+      const statPoints = [];
+      const statLabels = [];
+      for (let i = 5; i >= 0; i -= 1) {
+        const d = new Date();
+        d.setDate(1);
+        d.setMonth(d.getMonth() - i);
+        statPoints.push({ year: d.getFullYear(), month: d.getMonth(), value: 0 });
+        statLabels.push(d.toLocaleString(undefined, { month: 'short' }));
+      }
+
+      const bumpPoint = (isoDate) => {
+        if (!isoDate) return;
+        const d = new Date(isoDate);
+        if (Number.isNaN(d.getTime())) return;
+        const idx = statPoints.findIndex((m) => m.year === d.getFullYear() && m.month === d.getMonth());
+        if (idx >= 0) statPoints[idx].value += 1;
+      };
+
+      safeDeals.forEach((d) => bumpPoint(d?.created_at || d?.close_date || d?.dueDate));
+      safeLeads.forEach((l) => bumpPoint(l?.created_at));
+
+      setStatsSeries(statPoints.map((m) => m.value));
+      setStatsLabels(statLabels);
+
+      setMetrics({ closingDeals, totalAmount, holdingDeals, inProgress });
+    } catch (err) {
+      console.warn('Failed to load dashboard metrics', err?.message || err);
+    }
+  };
+
+  useEffect(() => {
+    loadMetrics();
+    loadEvents();
+  }, [token]);
 
   useEffect(() => {
     if (drawerOpen) {
@@ -128,10 +256,10 @@ export default function Dashboard({ onLogout, theme = 'dark', onToggleTheme, onN
 
     // Search in metrics
     const metricsData = [
-      { title: 'Closing Deals', value: '25', category: 'metric' },
-      { title: 'Total Amount', value: '$1,250,000', category: 'metric' },
-      { title: 'Holding Deals', value: '8', category: 'metric' },
-      { title: 'In Progress', value: '12', category: 'metric' },
+      { title: 'Closing Deals', value: String(metrics.closingDeals), category: 'metric' },
+      { title: 'Total Amount', value: `$${metrics.totalAmount.toLocaleString(undefined, { maximumFractionDigits: 0 })}`, category: 'metric' },
+      { title: 'Holding Deals', value: String(metrics.holdingDeals), category: 'metric' },
+      { title: 'In Progress', value: String(metrics.inProgress), category: 'metric' },
     ];
 
     metricsData.forEach(metric => {
@@ -205,13 +333,10 @@ export default function Dashboard({ onLogout, theme = 'dark', onToggleTheme, onN
     }
   };
 
-  const onRefresh = () => {
+  const onRefresh = async () => {
     setRefreshing(true);
-    // Simulate a refresh by waiting 1 second
-    setTimeout(() => {
-      setRefreshing(false);
-      // Here you could fetch new data from an API
-    }, 1000);
+    await Promise.all([loadMetrics(), loadEvents()]);
+    setTimeout(() => setRefreshing(false), 500);
   };
 
   const handleAddEvent = () => {
@@ -221,25 +346,42 @@ export default function Dashboard({ onLogout, theme = 'dark', onToggleTheme, onN
     setEventModalVisible(true);
   };
 
-  const handleSaveEvent = () => {
+  const handleSaveEvent = async () => {
     if (!newEventTitle.trim()) {
       Alert.alert('Missing title', 'Please enter an event title.');
       return;
     }
-    const newEvent = {
-      id: `e${Date.now()}`,
-      title: newEventTitle.trim(),
-      date: newEventDate.trim() || 'Date TBD',
-      location: newEventLocation.trim() || 'Location TBD',
-    };
-    setEvents(prev => [newEvent, ...prev]);
-    setEventModalVisible(false);
+    try {
+      if (!token) throw new Error('Missing auth token');
+      const payload = {
+        title: newEventTitle.trim(),
+        datetime: toIsoOrNow(newEventDate),
+        location: newEventLocation.trim() || 'Location TBD',
+        type: 'Meeting',
+        owner: 'You',
+        status: 'Scheduled',
+        category: 'General',
+        reminder: '1h',
+      };
+      const created = await createEvent(token, payload);
+      const newEvent = {
+        id: String(created?.id || Date.now()),
+        title: created?.title || payload.title,
+        date: formatEventDate(created?.datetime || payload.datetime),
+        location: created?.location || payload.location,
+      };
+      setEvents((prev) => [newEvent, ...prev]);
+      setEventModalVisible(false);
+    } catch (err) {
+      Alert.alert('Error', 'Failed to save event');
+      console.warn('Failed to create dashboard event', err?.message || err);
+    }
   };
 
-  const lineData = [20, 45, 28, 80, 99, 43, 50];
-  const labels = ['Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-  const barData = [20, 45, 28, 80, 99, 43];
-  const barLabels = ['2017', '2018', '2019', '2020', '2021', '2022'];
+  const lineData = activeSalesSeries;
+  const labels = activeSalesLabels;
+  const barData = statsSeries;
+  const barLabels = statsLabels;
 
   const renderLineChart = () => {
     const chartWidth = width - 56;
@@ -249,10 +391,11 @@ export default function Dashboard({ onLogout, theme = 'dark', onToggleTheme, onN
     const innerHeight = chartHeight - 2 * padding;
     const maxValue = Math.max(...lineData);
     const minValue = Math.min(...lineData);
+    const range = maxValue - minValue === 0 ? 1 : maxValue - minValue;
 
     const points = lineData.map((value, index) => {
       const x = padding + (index / (lineData.length - 1)) * innerWidth;
-      const y = padding + ((maxValue - value) / (maxValue - minValue)) * innerHeight;
+      const y = padding + ((maxValue - value) / range) * innerHeight;
       return { x, y, value };
     });
 
@@ -284,7 +427,7 @@ export default function Dashboard({ onLogout, theme = 'dark', onToggleTheme, onN
     const padding = 40;
     const innerWidth = chartWidth - 2 * padding;
     const innerHeight = chartHeight - 2 * padding;
-    const maxValue = Math.max(...barData);
+    const maxValue = Math.max(...barData, 1);
     const barWidth = (innerWidth / barData.length) * 0.8;
     const barSpacing = (innerWidth / barData.length) * 0.2;
 
@@ -373,9 +516,8 @@ export default function Dashboard({ onLogout, theme = 'dark', onToggleTheme, onN
     { label: 'Messages', action: () => { setDrawerOpen(false); onNavigateToMessages?.(); } },
     { label: 'Wallet', action: () => { setDrawerOpen(false); onNavigateToWallet?.(); } },
     { label: 'Analytics', action: () => { setDrawerOpen(false); onNavigateToAnalytics?.(); } },
-    { label: 'Calendar', action: () => { setDrawerOpen(false); Alert.alert('Calendar', 'Calendar screen coming soon.'); } },
-    { label: `Theme: ${theme === 'dark' ? 'Dark' : 'Light'}`, action: () => onToggleTheme && onToggleTheme() },
-    { label: 'Settings', action: () => Alert.alert('Settings', 'Settings screen coming soon.') },
+    { label: 'Events', action: () => { setDrawerOpen(false); onNavigateToEvents?.(); } },
+    { label: 'Profile', action: () => { setDrawerOpen(false); onNavigateToProfile?.(); } },
     { label: 'Logout', action: () => onLogout && onLogout(), danger: true },
   ];
 
@@ -504,7 +646,9 @@ export default function Dashboard({ onLogout, theme = 'dark', onToggleTheme, onN
         <TouchableOpacity style={[styles.balanceCard, { backgroundColor: colors.cardBg }]} activeOpacity={0.9} onPress={() => onNavigateToBalance?.()}>
           <View style={styles.balanceContent}>
             <Text style={styles.balanceTitle}>Total Balance</Text>
-            <Text style={[styles.balanceAmount, { color: colors.textPrimary }]}>$782,123.56</Text>
+            <Text style={[styles.balanceAmount, { color: colors.textPrimary }]}>
+              ${totalBalance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            </Text>
             <View style={styles.balanceSubtitle}>
               <Text style={styles.greenArrow}>^</Text>
               <Text style={styles.greenText}>+1.7% This month</Text>
@@ -536,9 +680,6 @@ export default function Dashboard({ onLogout, theme = 'dark', onToggleTheme, onN
             </TouchableOpacity>
           </View>
           <View style={styles.buttonRow}>
-            <TouchableOpacity style={[styles.actionButton, { backgroundColor: colors.cardBg }]} onPress={() => onNavigateToBilling && onNavigateToBilling()}>
-              <Text style={[styles.buttonText, { color: colors.textPrimary }]}>Billing</Text>
-            </TouchableOpacity>
           </View>
         </View>
 
@@ -546,19 +687,21 @@ export default function Dashboard({ onLogout, theme = 'dark', onToggleTheme, onN
           <Text style={[styles.cardTitle, { color: colors.textPrimary }]}>Key Metrics</Text>
           <View style={styles.metricsContainer}>
             <View style={styles.metricItem}>
-              <Text style={[styles.metricValue, { color: colors.textPrimary }]}>25</Text>
+              <Text style={[styles.metricValue, { color: colors.textPrimary }]}>{metrics.closingDeals}</Text>
               <Text style={[styles.metricLabel, { color: colors.textMuted }]}>Closing Deals</Text>
             </View>
             <View style={styles.metricItem}>
-              <Text style={[styles.metricValue, { color: colors.textPrimary }]}>$1,250,000</Text>
+              <Text style={[styles.metricValue, { color: colors.textPrimary }]}>
+                ${metrics.totalAmount.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+              </Text>
               <Text style={[styles.metricLabel, { color: colors.textMuted }]}>Total Amount</Text>
             </View>
             <View style={styles.metricItem}>
-              <Text style={[styles.metricValue, { color: colors.textPrimary }]}>8</Text>
+              <Text style={[styles.metricValue, { color: colors.textPrimary }]}>{metrics.holdingDeals}</Text>
               <Text style={[styles.metricLabel, { color: colors.textMuted }]}>Holding Deals</Text>
             </View>
             <View style={styles.metricItem}>
-              <Text style={[styles.metricValue, { color: colors.textPrimary }]}>12</Text>
+              <Text style={[styles.metricValue, { color: colors.textPrimary }]}>{metrics.inProgress}</Text>
               <Text style={[styles.metricLabel, { color: colors.textMuted }]}>In Progress</Text>
             </View>
           </View>
@@ -586,7 +729,19 @@ export default function Dashboard({ onLogout, theme = 'dark', onToggleTheme, onN
                 onPress={() => {
                   Alert.alert('Event Options', 'What would you like to do?', [
                     { text: 'Edit', onPress: () => console.log('Edit', event) },
-                    { text: 'Delete', onPress: () => setEvents(prev => prev.filter(e => e.id !== event.id)), style: 'destructive' },
+                    {
+                      text: 'Delete',
+                      onPress: async () => {
+                        try {
+                          if (token) await deleteEvent(token, event.id);
+                          setEvents((prev) => prev.filter((e) => e.id !== event.id));
+                        } catch (err) {
+                          Alert.alert('Error', 'Failed to delete event');
+                          console.warn('Failed to delete dashboard event', err?.message || err);
+                        }
+                      },
+                      style: 'destructive',
+                    },
                     { text: 'Cancel', style: 'cancel' },
                   ]);
                 }}
@@ -603,7 +758,9 @@ export default function Dashboard({ onLogout, theme = 'dark', onToggleTheme, onN
           <View style={styles.cardHeader}>
             <View>
               <Text style={[styles.cardTitle, { color: colors.textPrimary }]}>Active sales</Text>
-              <Text style={[styles.cardValue, { color: colors.textPrimary }]}>$12.7k</Text>
+              <Text style={[styles.cardValue, { color: colors.textPrimary }]}>
+                ${activeSalesTotal.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+              </Text>
               <Text style={styles.cardSubtitleGreen}>+3.5% vs last year</Text>
             </View>
             <TouchableOpacity style={[styles.dropdown, { backgroundColor: colors.cardBg }]} onPress={() => console.log('Monthly')}>
@@ -704,11 +861,7 @@ export default function Dashboard({ onLogout, theme = 'dark', onToggleTheme, onN
           </TouchableOpacity>
           <TouchableOpacity style={styles.navItem} onPress={() => onNavigateToAnalytics?.()}>
             <Text style={[styles.navText, { color: colors.textMuted }]}>Analytics</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={styles.navItem} onPress={() => onNavigateToProfile?.()}>
-            <Text style={[styles.navText, { color: colors.textMuted }]}>Profile</Text>
-          </TouchableOpacity>
-        </View>
+          </TouchableOpacity></View>
       </View>
     </SafeAreaView>
   );
@@ -935,7 +1088,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     paddingVertical: 12,
     paddingHorizontal: 20,
-    backgroundColor: 'rgba(15, 23, 36, 0.35)',
+    backgroundColor: 'transparent',
   },
   navItem: {
     flex: 1,
@@ -1229,4 +1382,6 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
 });
+
+
 
