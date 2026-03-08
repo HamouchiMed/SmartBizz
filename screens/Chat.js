@@ -18,12 +18,16 @@ import * as ImagePicker from 'expo-image-picker';
 import * as DocumentPicker from 'expo-document-picker';
 import { listMessages, createMessage, updateMessage, deleteMessage as deleteMessageAPI } from '../services/api';
 
+const messagesCache = new Map();
+
 export default function Chat({ token, deal, conversation, onBack, theme = 'dark' }) {
-  const [messages, setMessages] = useState([]);
+  const cacheKey = `${token || 'anon'}:${deal?.id || 'nodeal'}:${conversation?.id || 'noconv'}`;
+  const hasCached = messagesCache.has(cacheKey);
+  const [messages, setMessages] = useState(hasCached ? messagesCache.get(cacheKey) : []);
   const [text, setText] = useState('');
   const [editingId, setEditingId] = useState(null);
   const [selectedMessageId, setSelectedMessageId] = useState(null);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(!hasCached);
   const [refreshing, setRefreshing] = useState(false);
   const listRef = useRef(null);
 
@@ -40,7 +44,11 @@ export default function Chat({ token, deal, conversation, onBack, theme = 'dark'
           conversation_id: conversation?.id || null,
         };
         const created = await createMessage(token, reply);
-        setMessages(prev => [...prev, created]);
+        setMessages(prev => {
+          const next = [...prev, created];
+          messagesCache.set(cacheKey, next);
+          return next;
+        });
         scrollToEnd();
       } catch (err) {
         console.warn('Auto reply failed', err);
@@ -54,7 +62,9 @@ export default function Chat({ token, deal, conversation, onBack, theme = 'dark'
   // load messages (used on mount and for pull-to-refresh)
   const loadMessages = async () => {
     if (!token) return;
-    setLoading(true);
+    if (!messagesCache.has(cacheKey)) {
+      setLoading(true);
+    }
     try {
       let data = await listMessages(token);
       data = data || [];
@@ -66,6 +76,7 @@ export default function Chat({ token, deal, conversation, onBack, theme = 'dark'
       if (conversation?.id) {
         data = data.filter(m => String(m.conversation_id) === String(conversation.id));
       }
+      messagesCache.set(cacheKey, data);
       setMessages(data);
     } catch (err) {
       console.warn('Failed to load messages', err);
@@ -75,7 +86,7 @@ export default function Chat({ token, deal, conversation, onBack, theme = 'dark'
 
   useEffect(() => {
     loadMessages();
-  }, [token, deal?.id, conversation?.id]);
+  }, [token, deal?.id, conversation?.id, cacheKey]);
 
   const refreshMessages = async () => {
     setRefreshing(true);
@@ -90,7 +101,11 @@ export default function Chat({ token, deal, conversation, onBack, theme = 'dark'
       try {
         const msgData = { text: '[Image]', type: 'image', dealId: deal?.id || null, from: 'me', conversation_id: conversation?.id || null };
         const created = await createMessage(token, msgData);
-        setMessages(prev => [...prev, created]);
+        setMessages(prev => {
+          const next = [...prev, created];
+          messagesCache.set(cacheKey, next);
+          return next;
+        });
         scrollToEnd();
         // auto reply when chatting with a contact (not via deal)
         if (conversation && !deal) scheduleAutoReply();
@@ -105,7 +120,11 @@ export default function Chat({ token, deal, conversation, onBack, theme = 'dark'
       try {
         const msgData = { text: '[Document]', type: 'document', dealId: deal?.id || null, from: 'me', conversation_id: conversation?.id || null };
         const created = await createMessage(token, msgData);
-        setMessages(prev => [...prev, created]);
+        setMessages(prev => {
+          const next = [...prev, created];
+          messagesCache.set(cacheKey, next);
+          return next;
+        });
         scrollToEnd();
         if (conversation && !deal) scheduleAutoReply();
       } catch (err) {
@@ -119,7 +138,11 @@ export default function Chat({ token, deal, conversation, onBack, theme = 'dark'
     try {
       const msgData = { text: text.trim(), type: 'text', dealId: deal?.id || null, from: 'me', conversation_id: conversation?.id || null };
       const created = await createMessage(token, msgData);
-      setMessages(prev => [...prev, created]);
+      setMessages(prev => {
+        const next = [...prev, created];
+        messagesCache.set(cacheKey, next);
+        return next;
+      });
       setText('');
       scrollToEnd();
       if (conversation && !deal) scheduleAutoReply();
@@ -259,6 +282,7 @@ export default function Chat({ token, deal, conversation, onBack, theme = 'dark'
     console.log('Adding document to chat:', newDoc);
     setMessages(prev => {
       const updated = [...prev, newDoc];
+      messagesCache.set(cacheKey, updated);
       console.log('Messages updated:', updated);
       return updated;
     });
@@ -271,14 +295,18 @@ export default function Chat({ token, deal, conversation, onBack, theme = 'dark'
   const addImageToChat = (imageUri, source) => {
     const id = `m${Date.now()}`;
     
-    setMessages(prev => [...prev, { 
-      id, 
-      from: 'me', 
-      type: 'image', 
-      image: imageUri, 
-      time: getTime(),
-      source: source
-    }]);
+    setMessages(prev => {
+      const next = [...prev, {
+        id,
+        from: 'me',
+        type: 'image',
+        image: imageUri,
+        time: getTime(),
+        source: source,
+      }];
+      messagesCache.set(cacheKey, next);
+      return next;
+    });
     scrollToEnd();
   };
 
@@ -314,7 +342,11 @@ export default function Chat({ token, deal, conversation, onBack, theme = 'dark'
                 text: 'Delete',
                 style: 'destructive',
                 onPress: () => {
-                  setMessages(prev => prev.filter(m => m.id !== message.id));
+                  setMessages(prev => {
+                    const next = prev.filter(m => m.id !== message.id);
+                    messagesCache.set(cacheKey, next);
+                    return next;
+                  });
                   setSelectedMessageId(null);
                 },
               },
@@ -337,7 +369,11 @@ export default function Chat({ token, deal, conversation, onBack, theme = 'dark'
       try {
         if (token) {
           const updated = await updateMessage(token, editingId, { text: text.trim() });
-          setMessages(prev => prev.map(m => m.id === editingId ? updated : m));
+          setMessages(prev => {
+            const next = prev.map(m => m.id === editingId ? updated : m);
+            messagesCache.set(cacheKey, next);
+            return next;
+          });
         }
       } catch (err) {
         Alert.alert('Error', 'Failed to update message');

@@ -3,9 +3,12 @@ import { View, Text, StyleSheet, SafeAreaView, FlatList, TouchableOpacity, Modal
 import { BlurView } from 'expo-blur';
 import { listContacts, createContact, updateContact, deleteContact as deleteContactAPI } from '../services/api';
 
+let contactsCache = { token: null, data: [] };
+
 export default function Contacts({ token, onBack, theme = 'light', initialQuery = '', initialOpenId = null, onClearInitial, onMessageContact }) {
-  const [loading, setLoading] = useState(true);
-  const [places, setPlaces] = useState([]);
+  const hasCached = contactsCache.token === token && Array.isArray(contactsCache.data);
+  const [loading, setLoading] = useState(!hasCached);
+  const [places, setPlaces] = useState(hasCached ? contactsCache.data : []);
   const [selected, setSelected] = useState(null);
   const [show, setShow] = useState(false);
   const [modalVisible, setModalVisible] = useState(false);
@@ -14,10 +17,14 @@ export default function Contacts({ token, onBack, theme = 'light', initialQuery 
   useEffect(() => {
     async function loadContacts() {
       if (!token) return;
-      setLoading(true);
+      if (!(contactsCache.token === token && Array.isArray(contactsCache.data))) {
+        setLoading(true);
+      }
       try {
         const data = await listContacts(token);
-        setPlaces(data || []);
+        const next = data || [];
+        contactsCache = { token, data: next };
+        setPlaces(next);
       } catch (err) {
         console.warn('Failed to load contacts', err);
       }
@@ -107,7 +114,11 @@ export default function Contacts({ token, onBack, theme = 'light', initialQuery 
         notes: fNotes || '',
       };
       const created = await createContact(token, newPlace);
-      setPlaces(prev => [created, ...prev]);
+      setPlaces(prev => {
+        const next = [created, ...prev];
+        contactsCache = { token, data: next };
+        return next;
+      });
       setFName(''); setFAddress(''); setFPhone(''); setFEmail(''); setFHours(''); setFWebsite(''); setFNotes('');
       setShowCreate(false);
       Alert.alert('Success', 'Contact created');
@@ -121,7 +132,11 @@ export default function Contacts({ token, onBack, theme = 'light', initialQuery 
     if (!token) return;
     try {
       await deleteContactAPI(token, id);
-      setPlaces(prev => prev.filter(p => p.id !== id));
+      setPlaces(prev => {
+        const next = prev.filter(p => p.id !== id);
+        contactsCache = { token, data: next };
+        return next;
+      });
       setShow(false);
       Alert.alert('Success', 'Contact deleted');
     } catch (err) {

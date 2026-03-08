@@ -18,9 +18,12 @@ import {
 import { BlurView } from 'expo-blur';
 import { listLeads, createLead, updateLead, deleteLead as deleteLeadAPI } from '../services/api';
 
+let leadsCache = { token: null, data: [] };
+
 const Lead = ({ token, onBack, theme = 'light' }) => {
-  const [leads, setLeads] = useState([]);
-  const [loading, setLoading] = useState(true);
+  const hasCached = leadsCache.token === token && Array.isArray(leadsCache.data);
+  const [leads, setLeads] = useState(hasCached ? leadsCache.data : []);
+  const [loading, setLoading] = useState(!hasCached);
   const [query, setQuery] = useState('');
   const [filter, setFilter] = useState('All');
   const [selectedLead, setSelectedLead] = useState(null);
@@ -32,10 +35,14 @@ const Lead = ({ token, onBack, theme = 'light' }) => {
   useEffect(() => {
     async function loadLeads() {
       if (!token) return;
-      setLoading(true);
+      if (!(leadsCache.token === token && Array.isArray(leadsCache.data))) {
+        setLoading(true);
+      }
       try {
         const data = await listLeads(token);
-        setLeads(data);
+        const next = Array.isArray(data) ? data : [];
+        leadsCache = { token, data: next };
+        setLeads(next);
       } catch (err) {
         console.warn('Failed to load leads', err);
       }
@@ -99,7 +106,11 @@ const Lead = ({ token, onBack, theme = 'light' }) => {
     if (!token) return;
     try {
       const created = await createLead(token, lead);
-      setLeads(prev => [created, ...prev]);
+      setLeads(prev => {
+        const next = [created, ...prev];
+        leadsCache = { token, data: next };
+        return next;
+      });
       setShowCreate(false);
       Alert.alert('Success', 'Lead created');
     } catch (err) {
@@ -112,7 +123,11 @@ const Lead = ({ token, onBack, theme = 'light' }) => {
     if (!token) return;
     try {
       await deleteLeadAPI(token, id);
-      setLeads(prev => prev.filter(l => l.id !== id));
+      setLeads(prev => {
+        const next = prev.filter(l => l.id !== id);
+        leadsCache = { token, data: next };
+        return next;
+      });
       setShowModal(false);
       setSelectedLead(null);
       Alert.alert('Success', 'Lead deleted');
@@ -126,7 +141,11 @@ const Lead = ({ token, onBack, theme = 'light' }) => {
     if (!token || !selectedLead) return;
     try {
       const updated = await updateLead(token, selectedLead.id, updatedLead);
-      setLeads(prev => prev.map(l => l.id === selectedLead.id ? updated : l));
+      setLeads(prev => {
+        const next = prev.map(l => l.id === selectedLead.id ? updated : l);
+        leadsCache = { token, data: next };
+        return next;
+      });
       setSelectedLead(updated);
       setShowEdit(false);
       Alert.alert('Success', 'Lead updated');

@@ -16,6 +16,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { listEvents, createEvent, updateEvent, deleteEvent } from '../services/api';
 
 const categoryColors = ['#065f46', '#3b82f6', '#22c55e', '#f59e0b', '#ef4444'];
+let eventsCache = { token: null, data: [] };
 
 export default function Events({ onBack, theme = 'dark', onNavigateToDashboard, onNavigateToWallet, onNavigateToAnalytics, onNavigateToProfile, onNavigateToEvents, token }) {
   const colors = theme === 'dark' ? {
@@ -38,7 +39,8 @@ export default function Events({ onBack, theme = 'dark', onNavigateToDashboard, 
     inputBorder: 'rgba(37,99,235,0.12)',
   };
 
-  const [events, setEvents] = useState([]);
+  const hasCached = eventsCache.token === token && Array.isArray(eventsCache.data);
+  const [events, setEvents] = useState(hasCached ? eventsCache.data : []);
   const [viewMode, setViewMode] = useState('agenda'); // agenda | month
   const [currentMonth, setCurrentMonth] = useState(new Date('2026-02-01T00:00:00'));
   const [selectedDay, setSelectedDay] = useState(null);
@@ -62,7 +64,9 @@ export default function Events({ onBack, theme = 'dark', onNavigateToDashboard, 
       if (!token) return;
       try {
         const data = await listEvents(token);
-        setEvents(data || []);
+        const next = data || [];
+        eventsCache = { token, data: next };
+        setEvents(next);
       } catch (e) {
         Alert.alert('Events', e.message);
       }
@@ -173,7 +177,11 @@ export default function Events({ onBack, theme = 'dark', onNavigateToDashboard, 
           category,
           reminder,
         });
-        setEvents(prev => [newEvent, ...prev]);
+        setEvents(prev => {
+          const next = [newEvent, ...prev];
+          eventsCache = { token, data: next };
+          return next;
+        });
       } else if (modalMode === 'edit' && activeEventId) {
         const updated = await updateEvent(token, activeEventId, {
           title: title.trim(),
@@ -185,7 +193,11 @@ export default function Events({ onBack, theme = 'dark', onNavigateToDashboard, 
           category,
           reminder,
         });
-        setEvents(prev => prev.map(e => e.id === activeEventId ? updated : e));
+        setEvents(prev => {
+          const next = prev.map(e => e.id === activeEventId ? updated : e);
+          eventsCache = { token, data: next };
+          return next;
+        });
       }
       setModalVisible(false);
     } catch (e) {
@@ -197,7 +209,11 @@ export default function Events({ onBack, theme = 'dark', onNavigateToDashboard, 
     if (!activeEventId) return;
     try {
       await deleteEvent(token, activeEventId);
-      setEvents(prev => prev.filter(e => e.id !== activeEventId));
+      setEvents(prev => {
+        const next = prev.filter(e => e.id !== activeEventId);
+        eventsCache = { token, data: next };
+        return next;
+      });
       setModalVisible(false);
     } catch (e) {
       Alert.alert('Events', e.message);

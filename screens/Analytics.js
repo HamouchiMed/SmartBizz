@@ -13,6 +13,7 @@ import Svg, { Path, Line, Circle, Text as SvgText, Rect } from 'react-native-svg
 import { listLeads, listDeals, getBalance } from '../services/api';
 
 const { width } = Dimensions.get('window');
+let analyticsCache = null;
 
 export default function Analytics({ token, onBack, theme = 'dark', onNavigateToDashboard, onNavigateToWallet, onNavigateToProfile, onNavigateToEvents }) {
   const scrollY = React.useRef(new Animated.Value(0)).current;
@@ -52,16 +53,26 @@ export default function Analytics({ token, onBack, theme = 'dark', onNavigateToD
     chartBar: '#9333EA',
   };
 
-  const [lineData, setLineData] = useState([0, 0, 0, 0, 0, 0, 0]);
-  const [lineLabels, setLineLabels] = useState(['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']);
-  const [barData, setBarData] = useState([0, 0, 0, 0, 0, 0]);
-  const [barLabels, setBarLabels] = useState(['Lead', 'Qualified', 'Proposal', 'Negotiation', 'Closing', 'Closed']);
+  const hasCached = analyticsCache?.token === token;
+  const [lineData, setLineData] = useState(hasCached ? analyticsCache.lineData : [0, 0, 0, 0, 0, 0, 0]);
+  const [lineLabels, setLineLabels] = useState(hasCached ? analyticsCache.lineLabels : ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']);
+  const [barData, setBarData] = useState(hasCached ? analyticsCache.barData : [0, 0, 0, 0, 0, 0]);
+  const [barLabels, setBarLabels] = useState(hasCached ? analyticsCache.barLabels : ['Lead', 'Qualified', 'Proposal', 'Negotiation', 'Closing', 'Closed']);
 
-  const [metrics, setMetrics] = useState({
+  const [metrics, setMetrics] = useState(hasCached ? analyticsCache.metrics : {
     revenue: 0,
     newLeads: 0,
     churn: 0,
     avgDeal: 0,
+  });
+  const [forecast, setForecast] = useState(hasCached ? analyticsCache.forecast : {
+    expectedRevenueMonth: 0,
+    likelyToClose: 0,
+    weightedPipeline: 0,
+    teamPerformanceForecast: 0,
+    winProbability: 0,
+    revenueForecast: 0,
+    averageDealCycle: 0,
   });
 
   const parseAmount = (value) => {
@@ -73,10 +84,32 @@ export default function Analytics({ token, onBack, theme = 'dark', onNavigateToD
     return numeric * mult;
   };
 
+  const getDealProbability = (deal) => {
+    const text = `${deal?.stage || ''} ${deal?.status || ''}`.toLowerCase();
+    if (text.includes('lost') || text.includes('cancel')) return 0;
+    if (text.includes('closed')) return 1;
+    if (text.includes('closing')) return 0.85;
+    if (text.includes('negotiation')) return 0.7;
+    if (text.includes('proposal')) return 0.55;
+    if (text.includes('qualified')) return 0.4;
+    if (text.includes('lead')) return 0.25;
+    if (text.includes('progress')) return 0.5;
+    return 0.3;
+  };
+
   useEffect(() => {
     async function loadAnalyticsMetrics() {
       if (!token) {
         setMetrics({ revenue: 0, newLeads: 0, churn: 0, avgDeal: 0 });
+        setForecast({
+          expectedRevenueMonth: 0,
+          likelyToClose: 0,
+          weightedPipeline: 0,
+          teamPerformanceForecast: 0,
+          winProbability: 0,
+          revenueForecast: 0,
+          averageDealCycle: 0,
+        });
         setLineData([0, 0, 0, 0, 0, 0, 0]);
         setBarData([0, 0, 0, 0, 0, 0]);
         return;
@@ -106,6 +139,78 @@ export default function Analytics({ token, onBack, theme = 'dark', onNavigateToD
           newLeads: safeLeads.length,
           churn: churnPct,
           avgDeal,
+        });
+
+        // Forecast metrics (live) from deals pipeline.
+        const now = new Date();
+        const currMonth = now.getMonth();
+        const currYear = now.getFullYear();
+        let expectedRevenueMonth = 0;
+        let weightedPipeline = 0;
+        let likelyToClose = 0;
+        let closedDeals = 0;
+        let lostDealsCount = 0;
+        let cycleDaysSum = 0;
+        let cycleCount = 0;
+
+        // Build historical monthly closed revenue to estimate target baseline.
+        const closedRevenueByMonth = new Map();
+
+        safeDeals.forEach((deal) => {
+          const amount = parseAmount(deal?.amount);
+          const prob = getDealProbability(deal);
+          const dt = new Date(deal?.close_date || deal?.dueDate || deal?.created_at || Date.now());
+          const statusText = String(deal?.status || '').toLowerCase();
+
+          if (prob > 0 && prob < 1) {
+            weightedPipeline += amount * prob;
+          }
+          if (prob >= 0.7 && prob < 1) {
+            likelyToClose += 1;
+          }
+          if (dt.getMonth() === currMonth && dt.getFullYear() === currYear) {
+            expectedRevenueMonth += amount * prob;
+          }
+          if (statusText.includes('closed')) {
+            closedDeals += 1;
+            const key = `${dt.getFullYear()}-${dt.getMonth()}`;
+            closedRevenueByMonth.set(key, (closedRevenueByMonth.get(key) || 0) + amount);
+          }
+          if (statusText.includes('lost') || statusText.includes('cancel')) {
+            lostDealsCount += 1;
+          }
+
+          const created = new Date(deal?.created_at || deal?.createdAt || '');
+          const closed = new Date(deal?.close_date || '');
+          if (!Number.isNaN(created.getTime()) && !Number.isNaN(closed.getTime()) && closed >= created) {
+            const days = (closed - created) / (1000 * 60 * 60 * 24);
+            cycleDaysSum += days;
+            cycleCount += 1;
+          }
+        });
+
+        const revenueForecast = expectedRevenueMonth + weightedPipeline * 0.35;
+        const winProbability = (closedDeals + lostDealsCount) > 0
+          ? (closedDeals / (closedDeals + lostDealsCount)) * 100
+          : 0;
+        const averageDealCycle = cycleCount > 0 ? cycleDaysSum / cycleCount : 0;
+
+        const pastKeys = [];
+        for (let i = 1; i <= 3; i += 1) {
+          const d = new Date(currYear, currMonth - i, 1);
+          pastKeys.push(`${d.getFullYear()}-${d.getMonth()}`);
+        }
+        const baselineTarget = pastKeys.reduce((sum, k) => sum + (closedRevenueByMonth.get(k) || 0), 0) / Math.max(1, pastKeys.length);
+        const teamPerformanceForecast = baselineTarget > 0 ? (revenueForecast / baselineTarget) * 100 : 0;
+
+        setForecast({
+          expectedRevenueMonth,
+          likelyToClose,
+          weightedPipeline,
+          teamPerformanceForecast,
+          winProbability,
+          revenueForecast,
+          averageDealCycle,
         });
 
         // Weekly Performance (live): total deal amount by day for last 7 days
@@ -139,6 +244,23 @@ export default function Analytics({ token, onBack, theme = 'dark', onNavigateToD
         });
         setBarData(stageCounts);
         setBarLabels(['Lead', 'Qualified', 'Proposal', 'Negotiation', 'Closing', 'Closed']);
+        analyticsCache = {
+          token,
+          metrics: { revenue, newLeads: safeLeads.length, churn: churnPct, avgDeal },
+          forecast: {
+            expectedRevenueMonth,
+            likelyToClose,
+            weightedPipeline,
+            teamPerformanceForecast,
+            winProbability,
+            revenueForecast,
+            averageDealCycle,
+          },
+          lineData: week.map((w) => Math.round(w.value)),
+          lineLabels: weekLabels,
+          barData: stageCounts,
+          barLabels: ['Lead', 'Qualified', 'Proposal', 'Negotiation', 'Closing', 'Closed'],
+        };
       } catch (err) {
         console.warn('Failed to load analytics metrics', err?.message || err);
       }
@@ -251,6 +373,57 @@ export default function Analytics({ token, onBack, theme = 'dark', onNavigateToD
               </Text>
             </View>
           ))}
+        </View>
+
+        <View style={[styles.card, { backgroundColor: colors.cardBg }]}>
+          <View style={styles.cardHeader}>
+            <View>
+              <Text style={[styles.cardTitle, { color: colors.textPrimary }]}>Sales Forecast</Text>
+              <Text style={[styles.cardSubtitle, { color: colors.textMuted }]}>Planning for cash flow and targets</Text>
+            </View>
+            <View style={[styles.pill, { backgroundColor: '#FFFFFF', borderColor: '#D8D2C5', borderWidth: 1 }]}>
+              <Text style={[styles.pillText, { color: '#065f46' }]}>Forecast</Text>
+            </View>
+          </View>
+
+          <View style={styles.forecastGrid}>
+            <View style={[styles.forecastItem, { backgroundColor: '#FFFFFF' }]}>
+              <Text style={[styles.forecastLabel, { color: colors.textMuted }]}>Expected Revenue (Month)</Text>
+              <Text style={[styles.forecastValue, { color: colors.textPrimary }]}>
+                ${forecast.expectedRevenueMonth.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+              </Text>
+            </View>
+            <View style={[styles.forecastItem, { backgroundColor: '#FFFFFF' }]}>
+              <Text style={[styles.forecastLabel, { color: colors.textMuted }]}>Deals Likely to Close</Text>
+              <Text style={[styles.forecastValue, { color: colors.textPrimary }]}>{forecast.likelyToClose}</Text>
+            </View>
+            <View style={[styles.forecastItem, { backgroundColor: '#FFFFFF' }]}>
+              <Text style={[styles.forecastLabel, { color: colors.textMuted }]}>Weighted Pipeline</Text>
+              <Text style={[styles.forecastValue, { color: colors.textPrimary }]}>
+                ${forecast.weightedPipeline.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+              </Text>
+            </View>
+            <View style={[styles.forecastItem, { backgroundColor: '#FFFFFF' }]}>
+              <Text style={[styles.forecastLabel, { color: colors.textMuted }]}>Team Performance Forecast</Text>
+              <Text style={[styles.forecastValue, { color: colors.textPrimary }]}>
+                {forecast.teamPerformanceForecast.toFixed(1)}%
+              </Text>
+            </View>
+          </View>
+
+          <View style={styles.forecastKpis}>
+            <View style={styles.kpiPill}>
+              <Text style={[styles.kpiText, { color: '#065f46' }]}>Win Prob: {forecast.winProbability.toFixed(1)}%</Text>
+            </View>
+            <View style={styles.kpiPill}>
+              <Text style={[styles.kpiText, { color: '#065f46' }]}>
+                Revenue Forecast: ${forecast.revenueForecast.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+              </Text>
+            </View>
+            <View style={styles.kpiPill}>
+              <Text style={[styles.kpiText, { color: '#065f46' }]}>Avg Deal Cycle: {forecast.averageDealCycle.toFixed(1)}d</Text>
+            </View>
+          </View>
         </View>
 
         <View style={[styles.card, { backgroundColor: colors.cardBg }]}>
@@ -381,6 +554,44 @@ const styles = StyleSheet.create({
   },
   chart: {
     marginTop: 8,
+  },
+  forecastGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'space-between',
+    gap: 10,
+    marginTop: 8,
+    marginBottom: 10,
+  },
+  forecastItem: {
+    width: '48%',
+    borderRadius: 12,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+  },
+  forecastLabel: {
+    fontSize: 11,
+    marginBottom: 6,
+  },
+  forecastValue: {
+    fontSize: 16,
+    fontWeight: '700',
+  },
+  forecastKpis: {
+    gap: 8,
+  },
+  kpiPill: {
+    borderRadius: 999,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#D8D2C5',
+  },
+  kpiText: {
+    fontSize: 12,
+    fontWeight: '700',
   },
   pill: {
     paddingHorizontal: 10,

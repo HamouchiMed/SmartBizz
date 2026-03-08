@@ -1,7 +1,9 @@
-import React, { useEffect, useRef } from 'react';
-import { View, useColorScheme, Animated, Modal, Platform } from 'react-native';
+import React, { useEffect } from 'react';
+import { View, useColorScheme, Platform } from 'react-native';
 import Constants from 'expo-constants';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { NavigationContainer } from '@react-navigation/native';
+import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import WelcomeScreen from './screens/WelcomeScreen';
 import TermsScreen from './screens/TermsScreen';
 import PrivacyScreen from './screens/PrivacyScreen';
@@ -29,91 +31,76 @@ import HelpSupport from './screens/HelpSupport';
 import Onboarding from './screens/Onboarding';
 import { login, register, getMe } from './services/api';
 
+const Stack = createNativeStackNavigator();
+
 export default function App() {
-  const routeState = React.useState('welcome');
-  const [route, setRoute] = routeState;
-  const fadeAnim = useRef(new Animated.Value(1)).current;
-  const [selectedDeal, setSelectedDeal] = React.useState(null);
-  const [contactSearch, setContactSearch] = React.useState('');
-  const [contactOpenId, setContactOpenId] = React.useState(null);
-  const [signupData, setSignupData] = React.useState(null);
-  const [selectedConversation, setSelectedConversation] = React.useState(null);
   const [authToken, setAuthToken] = React.useState(null);
   const [authUser, setAuthUser] = React.useState(null);
+  const [signupData, setSignupData] = React.useState(null);
+  const [onboardingComplete, setOnboardingComplete] = React.useState(false);
+  const [booting, setBooting] = React.useState(true);
+  const [initialRoute, setInitialRoute] = React.useState('welcome');
 
-  // auto-detect API host so physical devices / emulators don't need manual config
+  const colorScheme = useColorScheme() || 'light';
+  const systemTheme = colorScheme === 'dark' ? 'dark' : 'light';
+  const [overrideTheme, setOverrideTheme] = React.useState(null);
+  const theme = overrideTheme ?? systemTheme;
+
+  const onToggleTheme = () => {
+    setOverrideTheme((prev) => {
+      if (prev) return prev === 'dark' ? 'light' : 'dark';
+      return systemTheme === 'dark' ? 'light' : 'dark';
+    });
+  };
+
   useEffect(() => {
     try {
-      // allow manual override: set global.__MANUAL_API_HOST__ = 'http://192.168.x.y:3001' before app loads
       if (typeof global.__MANUAL_API_HOST__ === 'string' && global.__MANUAL_API_HOST__) {
         global.__API_BASE_URL__ = global.__MANUAL_API_HOST__;
         console.log('Using manual API host:', global.__API_BASE_URL__);
         return;
       }
 
-      // log Constants to debug
-      console.log('Constants host info:', {
-        hostUri: Constants?.expoConfig?.hostUri,
-        debuggerHost: Constants?.manifest?.debuggerHost,
-      });
-
-      // try multiple sources for dev host (Expo SDK 54+ and older)
-      let dbg = 
+      const dbg =
         Constants?.expoConfig?.hostUri ||
-        Constants?.manifest?.debuggerHost || 
-        Constants?.manifest?.packagerOpts?.host || 
+        Constants?.manifest?.debuggerHost ||
+        Constants?.manifest?.packagerOpts?.host ||
         Constants?.manifest2?.debuggerHost ||
         Constants?.debuggerHost ||
         null;
 
       const candidates = [];
       if (dbg && typeof dbg === 'string') {
-        const ip = dbg.split(':')[0];
-        console.log('Extracted dev host IP:', ip);
-        candidates.push(`http://${ip}:3001`);
-      } else {
-        console.log('No debugger host found in Constants');
+        candidates.push(`http://${dbg.split(':')[0]}:3001`);
       }
-
-      // explicit LAN fallback for physical devices on same Wi-Fi
       candidates.push('http://192.168.10.167:3001');
       candidates.push('http://192.168.1.14:3001');
-
-      // emulator defaults
       if (Platform.OS === 'android') candidates.push('http://10.0.2.2:3001');
-      // localhost for simulator / desktop
       candidates.push('http://localhost:3001');
 
-      // dedupe while preserving order
       const uniqueCandidates = [...new Set(candidates)];
-      console.log('Candidate hosts:', uniqueCandidates);
 
-      // helper to test reachability with timeout
       const testHost = async (url, timeout = 2000) => {
         try {
           const controller = new AbortController();
           const id = setTimeout(() => controller.abort(), timeout);
           const res = await fetch(url + '/health', { method: 'GET', signal: controller.signal });
           clearTimeout(id);
-          console.log(`  +- ${url} responded with ${res.status}`);
           return res.ok;
-        } catch (e) {
-          console.log(`  +- ${url} failed:`, e.message);
+        } catch {
           return false;
         }
       };
 
       const findWorkingHost = async () => {
-        for (const c of uniqueCandidates) {
-          console.log(`Testing ${c}...`);
-          const ok = await testHost(c);
+        for (const candidate of uniqueCandidates) {
+          const ok = await testHost(candidate);
           if (ok) {
-            global.__API_BASE_URL__ = c;
-            console.log('Auto-detected API host:', c);
+            global.__API_BASE_URL__ = candidate;
+            console.log('Auto-detected API host:', candidate);
             return;
           }
         }
-        // fallback: set first candidate (best-effort)
         if (uniqueCandidates.length > 0) {
           global.__API_BASE_URL__ = uniqueCandidates[0];
           console.warn('Could not probe API hosts; defaulting to', uniqueCandidates[0]);
@@ -126,104 +113,22 @@ export default function App() {
     }
   }, []);
 
-  // persist token & user so reloads don't log out
   useEffect(() => {
     const loadSaved = async () => {
       try {
         const tok = await AsyncStorage.getItem('authToken');
         const usr = await AsyncStorage.getItem('authUser');
-        if (tok) setAuthToken(tok);
+        if (tok) {
+          setAuthToken(tok);
+          setInitialRoute('dashboard');
+        }
         if (usr) setAuthUser(JSON.parse(usr));
-      } catch {}
+      } finally {
+        setBooting(false);
+      }
     };
     loadSaved();
   }, []);
-  const [onboardingComplete, setOnboardingComplete] = React.useState(false);
-
-  const colorScheme = useColorScheme() || 'light';
-  const systemTheme = colorScheme === 'dark' ? 'dark' : 'light';
-
-  // allow a manual override (null = follow system)
-  const [overrideTheme, setOverrideTheme] = React.useState(null);
-  const theme = overrideTheme ?? systemTheme;
-
-  const onToggleTheme = () => {
-    setOverrideTheme(prev => {
-      if (prev) return prev === 'dark' ? 'light' : 'dark';
-      return systemTheme === 'dark' ? 'light' : 'dark';
-    });
-  };
-
-  const handleLogin = async (email, password) => {
-    try {
-      const res = await login(email, password);
-      if (!res?.token) {
-        throw new Error('No token returned');
-      }
-      setAuthToken(res.token);
-      setAuthUser(res.user || null);
-      // persist credentials
-      try {
-        await AsyncStorage.setItem('authToken', res.token);
-        await AsyncStorage.setItem('authUser', JSON.stringify(res.user || null));
-      } catch {}
-      setRoute('dashboard');
-    } catch (err) {
-      console.log('Login failed:', err?.message || err);
-      // Keep user on login; you can surface a UI error later if needed
-    }
-  };
-
-  const handleSignupWithOTP = async (signupInfo) => {
-    try {
-      const res = await register(
-        signupInfo?.name || 'User',
-        signupInfo?.email || '',
-        signupInfo?.password || ''
-      );
-      if (res?.token) {
-        setAuthToken(res.token);
-        setAuthUser(res.user || null);
-        setOnboardingComplete(false);
-        setRoute('onboarding');
-        return;
-      }
-      setRoute('login');
-    } catch (err) {
-      console.log('Signup failed:', err?.message || err);
-      setRoute('login');
-    }
-  };
-
-  const handleOTPVerify = async (verificationData) => {
-    // TODO: Send signup data + verification data to backend
-    console.log('OTP Verified:', { ...signupData, verification: verificationData });
-    if (signupData?.email && signupData?.password) {
-      const res = await register(signupData.name || 'User', signupData.email, signupData.password);
-      setAuthToken(res.token);
-      setAuthUser(res.user);
-    }
-    setSignupData(null);
-    setRoute('dashboard');
-  };
-
-  const handleNavigateToMessages = () => {
-    setRoute('chatList');
-  };
-
-  const handleSelectConversation = (conversation) => {
-    setSelectedConversation(conversation);
-    setRoute('chat');
-  };
-
-  useEffect(() => {
-    fadeAnim.setValue(0);
-    Animated.timing(fadeAnim, {
-      toValue: 1,
-      duration: 220,
-      useNativeDriver: true,
-    }).start();
-  }, [route, fadeAnim]);
 
   useEffect(() => {
     const load = async () => {
@@ -238,236 +143,377 @@ export default function App() {
     load();
   }, [authToken]);
 
-  const handleOpenDealFromSearch = (deal) => {
-    setSelectedDeal(deal);
-    setRoute('dealDetail');
-  };
-
-  const handleOpenContactFromSearch = (contact) => {
-    setContactSearch(contact?.name || '');
-    setContactOpenId(contact?.id || null);
-    setRoute('contacts');
-  };
-
-  const handleMessageContact = (contact) => {
-    if (!contact) return;
-    setSelectedConversation({
-      id: `contact-${contact.id}`,
-      name: contact.name,
-      type: 'Contact',
-    });
-    setRoute('chat');
-  };
+  if (booting) {
+    return <View style={{ flex: 1, backgroundColor: '#000' }} />;
+  }
 
   return (
-    <Animated.View style={{ flex: 1, opacity: fadeAnim }}>
-      {route === 'welcome' || route === 'terms' || route === 'privacy' ? (
-        <>
-          <WelcomeScreen onNext={() => setRoute('terms')} theme={theme} />
-          <Modal
-            visible={route === 'terms' || route === 'privacy'}
-            animationType="slide"
-            presentationStyle={Platform.OS === 'ios' ? 'pageSheet' : 'fullScreen'}
-            onRequestClose={() => setRoute('welcome')}
-          >
-            <TermsScreen 
-              onAccept={() => setRoute('privacy')} 
-              onDecline={() => setRoute('welcome')} 
-              theme={theme} 
+    <NavigationContainer>
+      <Stack.Navigator
+        initialRouteName={initialRoute}
+        screenOptions={{
+          headerShown: false,
+          gestureEnabled: true,
+          animation: 'default',
+        }}
+      >
+        <Stack.Screen name="welcome">
+          {({ navigation }) => (
+            <WelcomeScreen onNext={() => navigation.navigate('terms')} theme={theme} />
+          )}
+        </Stack.Screen>
+
+        <Stack.Screen name="terms" options={{ presentation: 'modal' }}>
+          {({ navigation }) => (
+            <TermsScreen
+              onAccept={() => navigation.navigate('privacy')}
+              onDecline={() => navigation.navigate('welcome')}
+              theme={theme}
             />
-            <Modal
-              visible={route === 'privacy'}
-              animationType="slide"
-              presentationStyle={Platform.OS === 'ios' ? 'pageSheet' : 'fullScreen'}
-              onRequestClose={() => setRoute('terms')}
-            >
-              <PrivacyScreen 
-                onAccept={() => setRoute('login')} 
-                onDecline={() => setRoute('welcome')} 
-                theme={theme} 
-              />
-            </Modal>
-          </Modal>
-        </>
-      ) : route === 'login' ? (
-        <LoginScreen 
-          onLogin={handleLogin}
-          onSignup={handleSignupWithOTP}
-          theme={theme} 
-        />
-      ) : route === 'otpVerification' ? (
-        <OTPVerificationScreen 
-          userEmail={signupData?.email || ''}
-          userPhone={signupData?.phone || ''}
-          onVerify={handleOTPVerify}
-          onBack={() => {
-            setSignupData(null);
-            setRoute('login');
-          }}
-          theme={theme}
-        />
-      ) : route === 'onboarding' ? (
-        <Onboarding
-          theme={theme}
-          onComplete={() => {
-            setOnboardingComplete(true);
-            setRoute('dashboard');
-          }}
-        />
-      ) : route === 'chatList' ? (
-        <ChatListScreen 
-          onSelectChat={handleSelectConversation}
-          onBack={() => setRoute('dashboard')}
-          theme={theme}
-        />
-      ) : route === 'chat' ? (
-        <Chat 
-          token={authToken}
-          deal={selectedDeal} 
-          conversation={selectedConversation}
-          onBack={() => setRoute('chatList')} 
-          theme={theme}
-        />
-      ) : route === 'balanceHistory' ? (
-        <BalanceHistory token={authToken} onBack={() => setRoute('dashboard')} theme={theme} />
-      ) : route === 'lead' ? (
-        <Lead token={authToken} onBack={() => setRoute('dashboard')} theme={theme} />
-      ) : route === 'contacts' ? (
-        <Contacts
-          token={authToken}
-          onBack={() => setRoute('dashboard')}
-          theme={theme}
-          initialQuery={contactSearch}
-          initialOpenId={contactOpenId}
-          onClearInitial={() => { setContactSearch(''); setContactOpenId(null); }}
-          onMessageContact={handleMessageContact}
-        />
-      ) : route === 'products' ? (
-        <Products onBack={() => setRoute('dashboard')} theme={theme} />
-      ) : route === 'deals' ? (
-        <Deals token={authToken} onBack={() => setRoute('dashboard')} onSelectDeal={(deal) => { setSelectedDeal(deal); setRoute('dealDetail'); }} theme={theme} />
-      ) : route === 'dealDetail' ? (
-        <DealDetail deal={selectedDeal} onBack={() => setRoute('deals')} onOpenChat={() => setRoute('chat')} />
-      ) : route === 'wallet' ? (
-        <Wallet
-          token={authToken}
-          onBack={() => setRoute('dashboard')}
-          theme={theme}
-          onNavigateToDashboard={() => setRoute('dashboard')}
-          onNavigateToBalance={() => setRoute('balanceHistory')}
-          onNavigateToAnalytics={() => setRoute('analytics')}
-          onNavigateToProfile={() => setRoute('profile')}
-          onNavigateToEvents={() => setRoute('events')}
-        />
-      ) : route === 'analytics' ? (
-        <Analytics
-          token={authToken}
-          onBack={() => setRoute('dashboard')}
-          theme={theme}
-          onNavigateToDashboard={() => setRoute('dashboard')}
-          onNavigateToWallet={() => setRoute('wallet')}
-          onNavigateToProfile={() => setRoute('profile')}
-          onNavigateToEvents={() => setRoute('events')}
-        />
-      ) : route === 'notifications' ? (
-        <Notifications onBack={() => setRoute('dashboard')} theme={theme} />
-      ) : route === 'events' ? (
-        <Events
-          onBack={() => setRoute('dashboard')}
-          theme={theme}
-          token={authToken}
-          onNavigateToDashboard={() => setRoute('dashboard')}
-          onNavigateToWallet={() => setRoute('wallet')}
-          onNavigateToAnalytics={() => setRoute('analytics')}
-          onNavigateToEvents={() => setRoute('events')}
-          onNavigateToProfile={() => setRoute('profile')}
-        />
-      ) : route === 'profile' ? (
-        <Profile
-          theme={theme}
-          token={authToken}
-          authUser={authUser}
-          onNavigateToDashboard={() => setRoute('dashboard')}
-          onNavigateToWallet={() => setRoute('wallet')}
-          onNavigateToAnalytics={() => setRoute('analytics')}
-          onNavigateToEvents={() => setRoute('events')}
-          onNavigateToAccountDetails={() => setRoute('accountDetails')}
-          onNavigateToSecurity={() => setRoute('security')}
-          onNavigateToNotificationsSettings={() => setRoute('notificationsSettings')}
-          onNavigateToBilling={() => setRoute('billing')}
-          onNavigateToHelpSupport={() => setRoute('helpSupport')}
-        />
-      ) : route === 'accountDetails' ? (
-        <AccountDetails
-          theme={theme}
-          onBack={() => setRoute('profile')}
-          onNavigateToDashboard={() => setRoute('dashboard')}
-          onNavigateToWallet={() => setRoute('wallet')}
-          onNavigateToAnalytics={() => setRoute('analytics')}
-          onNavigateToEvents={() => setRoute('events')}
-          onNavigateToProfile={() => setRoute('profile')}
-        />
-      ) : route === 'security' ? (
-        <Security
-          theme={theme}
-          onNavigateToDashboard={() => setRoute('dashboard')}
-          onNavigateToWallet={() => setRoute('wallet')}
-          onNavigateToAnalytics={() => setRoute('analytics')}
-          onNavigateToEvents={() => setRoute('events')}
-          onNavigateToProfile={() => setRoute('profile')}
-        />
-      ) : route === 'notificationsSettings' ? (
-        <NotificationsSettings
-          theme={theme}
-          onNavigateToDashboard={() => setRoute('dashboard')}
-          onNavigateToWallet={() => setRoute('wallet')}
-          onNavigateToAnalytics={() => setRoute('analytics')}
-          onNavigateToEvents={() => setRoute('events')}
-          onNavigateToProfile={() => setRoute('profile')}
-        />
-      ) : route === 'billing' ? (
-        <Billing
-          theme={theme}
-          onNavigateToDashboard={() => setRoute('dashboard')}
-          onNavigateToWallet={() => setRoute('wallet')}
-          onNavigateToAnalytics={() => setRoute('analytics')}
-          onNavigateToEvents={() => setRoute('events')}
-          onNavigateToProfile={() => setRoute('profile')}
-        />
-      ) : route === 'helpSupport' ? (
-        <HelpSupport
-          theme={theme}
-          onNavigateToDashboard={() => setRoute('dashboard')}
-          onNavigateToWallet={() => setRoute('wallet')}
-          onNavigateToAnalytics={() => setRoute('analytics')}
-          onNavigateToEvents={() => setRoute('events')}
-          onNavigateToProfile={() => setRoute('profile')}
-        />
-      ) : (
-        <Dashboard 
-          token={authToken}
-          onLogout={async () => { setAuthToken(null); setAuthUser(null); setRoute('login'); try { await AsyncStorage.removeItem('authToken'); await AsyncStorage.removeItem('authUser'); } catch {} }} 
-          theme={theme} 
-          showChecklist={!onboardingComplete}
-          onCompleteChecklist={() => setOnboardingComplete(true)}
-          onNavigateToBalance={() => setRoute('balanceHistory')}
-          onNavigateToLead={() => setRoute('lead')}
-          onNavigateToContact={() => setRoute('contacts')}
-          onNavigateToProduct={() => setRoute('products')}
-          onNavigateToDeal={() => setRoute('deals')}
-          onNavigateToMessages={handleNavigateToMessages}
-          onNavigateToWallet={() => setRoute('wallet')}
-          onNavigateToAnalytics={() => setRoute('analytics')}
-          onToggleTheme={onToggleTheme}
-          onOpenDeal={handleOpenDealFromSearch}
-          onOpenContact={handleOpenContactFromSearch}
-          onNavigateToNotifications={() => setRoute('notifications')}
-          onNavigateToEvents={() => setRoute('events')}
-          onNavigateToProfile={() => setRoute('profile')}
-          onNavigateToBilling={() => setRoute('billing')}
-        />
-      )}
-    </Animated.View>
+          )}
+        </Stack.Screen>
+
+        <Stack.Screen name="privacy" options={{ presentation: 'modal' }}>
+          {({ navigation }) => (
+            <PrivacyScreen
+              onAccept={() => navigation.reset({ index: 0, routes: [{ name: 'login' }] })}
+              onDecline={() => navigation.navigate('welcome')}
+              theme={theme}
+            />
+          )}
+        </Stack.Screen>
+
+        <Stack.Screen name="login">
+          {({ navigation }) => (
+            <LoginScreen
+              onLogin={async (email, password) => {
+                try {
+                  const res = await login(email, password);
+                  if (!res?.token) throw new Error('No token returned');
+                  setAuthToken(res.token);
+                  setAuthUser(res.user || null);
+                  try {
+                    await AsyncStorage.setItem('authToken', res.token);
+                    await AsyncStorage.setItem('authUser', JSON.stringify(res.user || null));
+                  } catch {}
+                  navigation.reset({ index: 0, routes: [{ name: 'dashboard' }] });
+                } catch (err) {
+                  console.log('Login failed:', err?.message || err);
+                }
+              }}
+              onSignup={async (signupInfo) => {
+                try {
+                  const res = await register(
+                    signupInfo?.name || 'User',
+                    signupInfo?.email || '',
+                    signupInfo?.password || ''
+                  );
+                  if (res?.token) {
+                    setAuthToken(res.token);
+                    setAuthUser(res.user || null);
+                    setOnboardingComplete(false);
+                    navigation.reset({ index: 0, routes: [{ name: 'onboarding' }] });
+                    return;
+                  }
+                  navigation.navigate('login');
+                } catch (err) {
+                  console.log('Signup failed:', err?.message || err);
+                  navigation.navigate('login');
+                }
+              }}
+              theme={theme}
+            />
+          )}
+        </Stack.Screen>
+
+        <Stack.Screen name="otpVerification">
+          {({ navigation }) => (
+            <OTPVerificationScreen
+              userEmail={signupData?.email || ''}
+              userPhone={signupData?.phone || ''}
+              onVerify={async (verificationData) => {
+                console.log('OTP Verified:', { ...signupData, verification: verificationData });
+                if (signupData?.email && signupData?.password) {
+                  const res = await register(signupData.name || 'User', signupData.email, signupData.password);
+                  setAuthToken(res.token);
+                  setAuthUser(res.user);
+                }
+                setSignupData(null);
+                navigation.reset({ index: 0, routes: [{ name: 'dashboard' }] });
+              }}
+              onBack={() => {
+                setSignupData(null);
+                navigation.goBack();
+              }}
+              theme={theme}
+            />
+          )}
+        </Stack.Screen>
+
+        <Stack.Screen name="onboarding">
+          {({ navigation }) => (
+            <Onboarding
+              theme={theme}
+              onComplete={() => {
+                setOnboardingComplete(true);
+                navigation.reset({ index: 0, routes: [{ name: 'dashboard' }] });
+              }}
+            />
+          )}
+        </Stack.Screen>
+
+        <Stack.Screen name="dashboard" options={{ gestureEnabled: false }}>
+          {({ navigation }) => (
+            <Dashboard
+              token={authToken}
+              onLogout={async () => {
+                setAuthToken(null);
+                setAuthUser(null);
+                try {
+                  await AsyncStorage.removeItem('authToken');
+                  await AsyncStorage.removeItem('authUser');
+                } catch {}
+                navigation.reset({ index: 0, routes: [{ name: 'login' }] });
+              }}
+              theme={theme}
+              showChecklist={!onboardingComplete}
+              onCompleteChecklist={() => setOnboardingComplete(true)}
+              onToggleTheme={onToggleTheme}
+              onNavigateToBalance={() => navigation.navigate('balanceHistory')}
+              onNavigateToLead={() => navigation.navigate('lead')}
+              onNavigateToContact={() => navigation.navigate('contacts')}
+              onNavigateToProduct={() => navigation.navigate('products')}
+              onNavigateToDeal={() => navigation.navigate('deals')}
+              onNavigateToMessages={() => navigation.navigate('chatList')}
+              onNavigateToWallet={() => navigation.navigate('wallet')}
+              onNavigateToAnalytics={() => navigation.navigate('analytics')}
+              onNavigateToNotifications={() => navigation.navigate('notifications')}
+              onNavigateToEvents={() => navigation.navigate('events')}
+              onNavigateToProfile={() => navigation.navigate('profile')}
+              onNavigateToBilling={() => navigation.navigate('billing')}
+              onOpenDeal={(deal) => navigation.navigate('dealDetail', { deal })}
+              onOpenContact={(contact) =>
+                navigation.navigate('contacts', {
+                  initialQuery: contact?.name || '',
+                  initialOpenId: contact?.id || null,
+                })
+              }
+            />
+          )}
+        </Stack.Screen>
+
+        <Stack.Screen name="chatList">
+          {({ navigation }) => (
+            <ChatListScreen
+              onSelectChat={(conversation) => navigation.navigate('chat', { conversation })}
+              onBack={() => navigation.goBack()}
+              theme={theme}
+            />
+          )}
+        </Stack.Screen>
+
+        <Stack.Screen name="chat">
+          {({ navigation, route }) => (
+            <Chat
+              token={authToken}
+              deal={route.params?.deal}
+              conversation={route.params?.conversation}
+              onBack={() => navigation.goBack()}
+              theme={theme}
+            />
+          )}
+        </Stack.Screen>
+
+        <Stack.Screen name="balanceHistory">
+          {({ navigation }) => (
+            <BalanceHistory token={authToken} onBack={() => navigation.goBack()} theme={theme} />
+          )}
+        </Stack.Screen>
+
+        <Stack.Screen name="lead">
+          {({ navigation }) => <Lead token={authToken} onBack={() => navigation.goBack()} theme={theme} />}
+        </Stack.Screen>
+
+        <Stack.Screen name="contacts">
+          {({ navigation, route }) => (
+            <Contacts
+              token={authToken}
+              onBack={() => navigation.goBack()}
+              theme={theme}
+              initialQuery={route.params?.initialQuery || ''}
+              initialOpenId={route.params?.initialOpenId || null}
+              onClearInitial={() => {}}
+              onMessageContact={(contact) =>
+                navigation.navigate('chat', {
+                  conversation: {
+                    id: `contact-${contact?.id}`,
+                    name: contact?.name,
+                    type: 'Contact',
+                  },
+                })
+              }
+            />
+          )}
+        </Stack.Screen>
+
+        <Stack.Screen name="products">
+          {({ navigation }) => <Products onBack={() => navigation.goBack()} theme={theme} />}
+        </Stack.Screen>
+
+        <Stack.Screen name="deals">
+          {({ navigation }) => (
+            <Deals
+              token={authToken}
+              onBack={() => navigation.goBack()}
+              onSelectDeal={(deal) => navigation.navigate('dealDetail', { deal })}
+              theme={theme}
+            />
+          )}
+        </Stack.Screen>
+
+        <Stack.Screen name="dealDetail">
+          {({ navigation, route }) => (
+            <DealDetail
+              deal={route.params?.deal}
+              onBack={() => navigation.goBack()}
+              onOpenChat={() => navigation.navigate('chat', { deal: route.params?.deal })}
+            />
+          )}
+        </Stack.Screen>
+
+        <Stack.Screen name="wallet" options={{ gestureEnabled: false }}>
+          {({ navigation }) => (
+            <Wallet
+              token={authToken}
+              onBack={() => navigation.goBack()}
+              theme={theme}
+              onNavigateToDashboard={() => navigation.navigate('dashboard')}
+              onNavigateToBalance={() => navigation.navigate('balanceHistory')}
+              onNavigateToAnalytics={() => navigation.navigate('analytics')}
+              onNavigateToProfile={() => navigation.navigate('profile')}
+              onNavigateToEvents={() => navigation.navigate('events')}
+            />
+          )}
+        </Stack.Screen>
+
+        <Stack.Screen name="analytics" options={{ gestureEnabled: false }}>
+          {({ navigation }) => (
+            <Analytics
+              token={authToken}
+              onBack={() => navigation.goBack()}
+              theme={theme}
+              onNavigateToDashboard={() => navigation.navigate('dashboard')}
+              onNavigateToWallet={() => navigation.navigate('wallet')}
+              onNavigateToProfile={() => navigation.navigate('profile')}
+              onNavigateToEvents={() => navigation.navigate('events')}
+            />
+          )}
+        </Stack.Screen>
+
+        <Stack.Screen name="notifications">
+          {({ navigation }) => <Notifications onBack={() => navigation.goBack()} theme={theme} />}
+        </Stack.Screen>
+
+        <Stack.Screen name="events" options={{ gestureEnabled: false }}>
+          {({ navigation }) => (
+            <Events
+              onBack={() => navigation.goBack()}
+              theme={theme}
+              token={authToken}
+              onNavigateToDashboard={() => navigation.navigate('dashboard')}
+              onNavigateToWallet={() => navigation.navigate('wallet')}
+              onNavigateToAnalytics={() => navigation.navigate('analytics')}
+              onNavigateToEvents={() => navigation.navigate('events')}
+              onNavigateToProfile={() => navigation.navigate('profile')}
+            />
+          )}
+        </Stack.Screen>
+
+        <Stack.Screen name="profile">
+          {({ navigation }) => (
+            <Profile
+              theme={theme}
+              token={authToken}
+              authUser={authUser}
+              onNavigateToDashboard={() => (navigation.canGoBack() ? navigation.goBack() : navigation.navigate('dashboard'))}
+              onNavigateToWallet={() => navigation.navigate('wallet')}
+              onNavigateToAnalytics={() => navigation.navigate('analytics')}
+              onNavigateToEvents={() => navigation.navigate('events')}
+              onNavigateToAccountDetails={() => navigation.navigate('accountDetails')}
+              onNavigateToSecurity={() => navigation.navigate('security')}
+              onNavigateToNotificationsSettings={() => navigation.navigate('notificationsSettings')}
+              onNavigateToBilling={() => navigation.navigate('billing')}
+              onNavigateToHelpSupport={() => navigation.navigate('helpSupport')}
+            />
+          )}
+        </Stack.Screen>
+
+        <Stack.Screen name="accountDetails">
+          {({ navigation }) => (
+            <AccountDetails
+              theme={theme}
+              onBack={() => navigation.goBack()}
+              onNavigateToDashboard={() => navigation.navigate('dashboard')}
+              onNavigateToWallet={() => navigation.navigate('wallet')}
+              onNavigateToAnalytics={() => navigation.navigate('analytics')}
+              onNavigateToEvents={() => navigation.navigate('events')}
+              onNavigateToProfile={() => navigation.navigate('profile')}
+            />
+          )}
+        </Stack.Screen>
+
+        <Stack.Screen name="security">
+          {({ navigation }) => (
+            <Security
+              theme={theme}
+              onNavigateToDashboard={() => navigation.navigate('dashboard')}
+              onNavigateToWallet={() => navigation.navigate('wallet')}
+              onNavigateToAnalytics={() => navigation.navigate('analytics')}
+              onNavigateToEvents={() => navigation.navigate('events')}
+              onNavigateToProfile={() => (navigation.canGoBack() ? navigation.goBack() : navigation.navigate('profile'))}
+            />
+          )}
+        </Stack.Screen>
+
+        <Stack.Screen name="notificationsSettings">
+          {({ navigation }) => (
+            <NotificationsSettings
+              theme={theme}
+              onNavigateToDashboard={() => navigation.navigate('dashboard')}
+              onNavigateToWallet={() => navigation.navigate('wallet')}
+              onNavigateToAnalytics={() => navigation.navigate('analytics')}
+              onNavigateToEvents={() => navigation.navigate('events')}
+              onNavigateToProfile={() => (navigation.canGoBack() ? navigation.goBack() : navigation.navigate('profile'))}
+            />
+          )}
+        </Stack.Screen>
+
+        <Stack.Screen name="billing">
+          {({ navigation }) => (
+            <Billing
+              theme={theme}
+              onNavigateToDashboard={() => navigation.navigate('dashboard')}
+              onNavigateToWallet={() => navigation.navigate('wallet')}
+              onNavigateToAnalytics={() => navigation.navigate('analytics')}
+              onNavigateToEvents={() => navigation.navigate('events')}
+              onNavigateToProfile={() => (navigation.canGoBack() ? navigation.goBack() : navigation.navigate('profile'))}
+            />
+          )}
+        </Stack.Screen>
+
+        <Stack.Screen name="helpSupport">
+          {({ navigation }) => (
+            <HelpSupport
+              theme={theme}
+              onNavigateToDashboard={() => navigation.navigate('dashboard')}
+              onNavigateToWallet={() => navigation.navigate('wallet')}
+              onNavigateToAnalytics={() => navigation.navigate('analytics')}
+              onNavigateToEvents={() => navigation.navigate('events')}
+              onNavigateToProfile={() => (navigation.canGoBack() ? navigation.goBack() : navigation.navigate('profile'))}
+            />
+          )}
+        </Stack.Screen>
+      </Stack.Navigator>
+    </NavigationContainer>
   );
 }
-

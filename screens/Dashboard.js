@@ -14,6 +14,7 @@ import {
   Modal,
   KeyboardAvoidingView,
   Platform,
+  PanResponder,
 } from 'react-native';
 import Svg, { Path, Line, Circle, Text as SvgText, Rect } from 'react-native-svg';
 import { BlurView } from 'expo-blur';
@@ -21,8 +22,10 @@ import { Ionicons } from '@expo/vector-icons';
 import { listDeals, listLeads, getBalance, listEvents, createEvent, deleteEvent } from '../services/api';
 
 const { width } = Dimensions.get('window');
+let dashboardCache = null;
 
 export default function Dashboard({ token, onLogout, theme = 'dark', onToggleTheme, onNavigateToBalance, onNavigateToLead, onNavigateToContact, onNavigateToProduct, onNavigateToDeal, onNavigateToMessages, onNavigateToWallet, onNavigateToAnalytics, onNavigateToEvents, onNavigateToProfile, onNavigateToBilling, onNavigateToNotifications }) {
+  const hasCached = dashboardCache?.token === token;
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [drawerVisible, setDrawerVisible] = useState(false);
   const [searchVisible, setSearchVisible] = useState(false);
@@ -33,22 +36,40 @@ export default function Dashboard({ token, onLogout, theme = 'dark', onToggleThe
   const [newEventTitle, setNewEventTitle] = useState('');
   const [newEventDate, setNewEventDate] = useState('');
   const [newEventLocation, setNewEventLocation] = useState('');
-  const [metrics, setMetrics] = useState({
+  const [metrics, setMetrics] = useState(hasCached ? dashboardCache.metrics : {
     closingDeals: 0,
     totalAmount: 0,
     holdingDeals: 0,
     inProgress: 0,
   });
-  const [totalBalance, setTotalBalance] = useState(0);
-  const [activeSalesSeries, setActiveSalesSeries] = useState([0, 0, 0, 0, 0, 0, 0]);
-  const [activeSalesLabels, setActiveSalesLabels] = useState(['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul']);
-  const [activeSalesTotal, setActiveSalesTotal] = useState(0);
-  const [statsSeries, setStatsSeries] = useState([0, 0, 0, 0, 0, 0]);
-  const [statsLabels, setStatsLabels] = useState(['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun']);
+  const [totalBalance, setTotalBalance] = useState(hasCached ? dashboardCache.totalBalance : 0);
+  const [activeSalesSeries, setActiveSalesSeries] = useState(hasCached ? dashboardCache.activeSalesSeries : [0, 0, 0, 0, 0, 0, 0]);
+  const [activeSalesLabels, setActiveSalesLabels] = useState(hasCached ? dashboardCache.activeSalesLabels : ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul']);
+  const [activeSalesTotal, setActiveSalesTotal] = useState(hasCached ? dashboardCache.activeSalesTotal : 0);
+  const [statsSeries, setStatsSeries] = useState(hasCached ? dashboardCache.statsSeries : [0, 0, 0, 0, 0, 0]);
+  const [statsLabels, setStatsLabels] = useState(hasCached ? dashboardCache.statsLabels : ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun']);
   const slideAnim = useRef(new Animated.Value(-300)).current;
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const mainAnim = useRef(new Animated.Value(0)).current;
-  const [events, setEvents] = useState([]);
+  const [events, setEvents] = useState(hasCached ? dashboardCache.events : []);
+  const drawerSwipe = React.useMemo(
+    () =>
+      PanResponder.create({
+        onMoveShouldSetPanResponderCapture: (_, gesture) =>
+          Math.abs(gesture.dx) > 12 && Math.abs(gesture.dx) > Math.abs(gesture.dy) * 1.1,
+        onMoveShouldSetPanResponder: (_, gesture) =>
+          Math.abs(gesture.dx) > 12 && Math.abs(gesture.dx) > Math.abs(gesture.dy) * 1.1,
+        onPanResponderRelease: (_, gesture) => {
+          const startedNearLeftEdge = gesture.x0 <= 48;
+          if (!drawerOpen && (gesture.dx < -60 || (startedNearLeftEdge && gesture.dx > 40))) {
+            setDrawerOpen(true);
+          } else if (drawerOpen && gesture.dx > 70) {
+            setDrawerOpen(false);
+          }
+        },
+      }),
+    [drawerOpen]
+  );
 
   const parseAmount = (value) => {
     if (typeof value === 'number') return value;
@@ -93,6 +114,18 @@ export default function Dashboard({ token, onLogout, theme = 'dark', onToggleThe
         location: e.location || 'Location TBD',
       }));
       setEvents(mapped);
+      dashboardCache = {
+        ...(dashboardCache || {}),
+        token,
+        events: mapped,
+        metrics,
+        totalBalance,
+        activeSalesSeries,
+        activeSalesLabels,
+        activeSalesTotal,
+        statsSeries,
+        statsLabels,
+      };
     } catch (err) {
       console.warn('Failed to load dashboard events', err?.message || err);
     }
@@ -173,7 +206,20 @@ export default function Dashboard({ token, onLogout, theme = 'dark', onToggleThe
       setStatsSeries(statPoints.map((m) => m.value));
       setStatsLabels(statLabels);
 
-      setMetrics({ closingDeals, totalAmount, holdingDeals, inProgress });
+      const nextMetrics = { closingDeals, totalAmount, holdingDeals, inProgress };
+      setMetrics(nextMetrics);
+      dashboardCache = {
+        ...(dashboardCache || {}),
+        token,
+        events,
+        metrics: nextMetrics,
+        totalBalance,
+        activeSalesSeries,
+        activeSalesLabels,
+        activeSalesTotal,
+        statsSeries,
+        statsLabels,
+      };
     } catch (err) {
       console.warn('Failed to load dashboard metrics', err?.message || err);
     }
@@ -183,6 +229,21 @@ export default function Dashboard({ token, onLogout, theme = 'dark', onToggleThe
     loadMetrics();
     loadEvents();
   }, [token]);
+
+  useEffect(() => {
+    if (!token) return;
+    dashboardCache = {
+      token,
+      events,
+      metrics,
+      totalBalance,
+      activeSalesSeries,
+      activeSalesLabels,
+      activeSalesTotal,
+      statsSeries,
+      statsLabels,
+    };
+  }, [token, events, metrics, totalBalance, activeSalesSeries, activeSalesLabels, activeSalesTotal, statsSeries, statsLabels]);
 
   useEffect(() => {
     if (drawerOpen) {
@@ -611,6 +672,7 @@ export default function Dashboard({ token, onLogout, theme = 'dark', onToggleThe
 
       <Animated.View
         pointerEvents={drawerOpen ? 'none' : 'auto'}
+        {...drawerSwipe.panHandlers}
         style={[
           styles.mainLayer,
           {
@@ -632,7 +694,7 @@ export default function Dashboard({ token, onLogout, theme = 'dark', onToggleThe
           <TouchableOpacity style={styles.headerIcon} onPress={() => setDrawerOpen(!drawerOpen)}>
             <Ionicons name="menu" size={30} color="#000000" />
           </TouchableOpacity>
-          <Text style={[styles.headerTitle, { color: colors.textPrimary }]}>Welcome Back</Text>
+          <Text style={[styles.headerTitle, { color: colors.cardBg }]}>Welcome Back</Text>
           <View style={styles.headerActions}>
             <TouchableOpacity style={styles.searchButton} activeOpacity={0.8} onPress={() => setSearchVisible(true)}>
               <Ionicons name="search" size={23} color="#000000" />

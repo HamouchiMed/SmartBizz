@@ -19,19 +19,26 @@ import {
 import { BlurView } from 'expo-blur';
 import { listDeals, createDeal, updateDeal, deleteDeal as deleteDealAPI } from '../services/api';
 
+let dealsCache = { token: null, data: [] };
+
 const Deals = ({ token, navigation, onBack, onSelectDeal }) => {
-  const [loading, setLoading] = useState(true);
+  const hasCached = dealsCache.token === token && Array.isArray(dealsCache.data);
+  const [loading, setLoading] = useState(!hasCached);
   const [activeTab, setActiveTab] = useState('all'); // all, recent, upcoming, inProgress
   const [searchQuery, setSearchQuery] = useState('');
-  const [deals, setDeals] = useState([]);
+  const [deals, setDeals] = useState(hasCached ? dealsCache.data : []);
 
   useEffect(() => {
     async function loadDeals() {
       if (!token) return;
-      setLoading(true);
+      if (!(dealsCache.token === token && Array.isArray(dealsCache.data))) {
+        setLoading(true);
+      }
       try {
         const data = await listDeals(token);
-        setDeals(data || []);
+        const next = data || [];
+        dealsCache = { token, data: next };
+        setDeals(next);
       } catch (err) {
         console.warn('Failed to load deals', err);
       }
@@ -149,7 +156,11 @@ const Deals = ({ token, navigation, onBack, onSelectDeal }) => {
         category: 'recent',
       };
       const created = await createDeal(token, newDeal);
-      setDeals(prev => [created, ...prev]);
+      setDeals(prev => {
+        const next = [created, ...prev];
+        dealsCache = { token, data: next };
+        return next;
+      });
       setFName(''); setFClient(''); setFEmail(''); setFAmount(''); setFStatus('In Progress'); setFDueDate('');
       setShowCreate(false);
       Alert.alert('Success', 'Deal created');
@@ -163,7 +174,11 @@ const Deals = ({ token, navigation, onBack, onSelectDeal }) => {
     if (!token) return;
     try {
       await deleteDealAPI(token, id);
-      setDeals(prev => prev.filter(d => d.id !== id));
+      setDeals(prev => {
+        const next = prev.filter(d => d.id !== id);
+        dealsCache = { token, data: next };
+        return next;
+      });
       Alert.alert('Success', 'Deal deleted');
     } catch (err) {
       Alert.alert('Error', 'Failed to delete deal');

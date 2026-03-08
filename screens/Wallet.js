@@ -21,6 +21,7 @@ import { listTransactions, createTransaction, deleteTransaction, getBalance, upd
 // removed chart dependency - svg not needed now
 
 const { width } = Dimensions.get('window');
+let walletCache = { token: null, transactions: [], balance: 0 };
 
 export default function Wallet({ token, onBack, theme = 'dark', onNavigateToDashboard, onNavigateToBalance, onNavigateToAnalytics, onNavigateToProfile, onNavigateToEvents }) {
   const colors = theme === 'dark' ? {
@@ -51,8 +52,9 @@ export default function Wallet({ token, onBack, theme = 'dark', onNavigateToDash
     { id: '3', type: 'American Express', lastFour: '5678', expiry: '03/29', color: '#006fcf' },
   ];
 
-  const [transactions, setTransactions] = useState([]);
-  const [balance, setBalance] = useState(0);
+  const hasCached = walletCache.token === token && Array.isArray(walletCache.transactions);
+  const [transactions, setTransactions] = useState(hasCached ? walletCache.transactions : []);
+  const [balance, setBalance] = useState(hasCached ? walletCache.balance : 0);
   const [selectedTx, setSelectedTx] = useState(null);
   const [txModalVisible, setTxModalVisible] = useState(false);  const scrollRef = React.useRef(null);
   const listRef = React.useRef(null);
@@ -76,65 +78,48 @@ export default function Wallet({ token, onBack, theme = 'dark', onNavigateToDash
     extrapolate: 'clamp',
   });
 
-  React.useEffect(() => {
-    // load is intentionally simple — use fetchTransactions for manual refresh
-    async function fetchTransactions() {
-      if (!token) return;
+  const deriveBalance = React.useCallback((rows) => {
+    return (rows || []).reduce((sum, tx) => {
+      const amt = parseFloat((tx.amount || '0').toString().replace(/[^0-9.-]/g, '')) || 0;
+      return sum + (tx.type === 'income' ? amt : -amt);
+    }, 0);
+  }, []);
+
+  const fetchWalletData = React.useCallback(async () => {
+    if (!token) return;
+    try {
+      const data = await listTransactions(token);
+      const txRows = Array.isArray(data) ? data : [];
       try {
-        const data = await listTransactions(token);
-        setTransactions(data);
-        try {
-          const balRes = await getBalance(token);
-          if (balRes && typeof balRes.amount !== 'undefined' && balRes.amount !== null) {
-            setBalance(parseFloat(balRes.amount));
-          } else {
-            const bal = data.reduce((sum, tx) => {
-              const amt = parseFloat((tx.amount || '0').toString().replace(/[^0-9.-]/g, '')) || 0;
-              return sum + (tx.type === 'income' ? amt : -amt);
-            }, 0);
-            setBalance(bal);
-          }
-        } catch (e) {
-          const bal = data.reduce((sum, tx) => {
-            const amt = parseFloat((tx.amount || '0').toString().replace(/[^0-9.-]/g, '')) || 0;
-            return sum + (tx.type === 'income' ? amt : -amt);
-          }, 0);
-          setBalance(bal);
-        }
-      } catch (err) {
-        console.warn('Failed to load transactions', err);
+        const balRes = await getBalance(token);
+        const nextBalance =
+          balRes && typeof balRes.amount !== 'undefined' && balRes.amount !== null
+            ? parseFloat(balRes.amount)
+            : deriveBalance(txRows);
+        walletCache = { token, transactions: txRows, balance: nextBalance };
+        setTransactions(txRows);
+        setBalance(nextBalance);
+      } catch (e) {
+        const nextBalance = deriveBalance(txRows);
+        walletCache = { token, transactions: txRows, balance: nextBalance };
+        setTransactions(txRows);
+        setBalance(nextBalance);
       }
+    } catch (err) {
+      console.warn('Failed to load transactions', err);
     }
-    fetchTransactions();
-  }, [token]);
+  }, [token, deriveBalance]);
+
+  React.useEffect(() => {
+    fetchWalletData();
+  }, [fetchWalletData]);
 
   const [refreshing, setRefreshing] = useState(false);
 
   const onRefresh = async () => {
     setRefreshing(true);
     try {
-      if (token) {
-        const data = await listTransactions(token);
-        setTransactions(data);
-        try {
-          const balRes = await getBalance(token);
-          if (balRes && typeof balRes.amount !== 'undefined' && balRes.amount !== null) {
-            setBalance(parseFloat(balRes.amount));
-          } else {
-            const bal = data.reduce((sum, tx) => {
-              const amt = parseFloat((tx.amount || '0').toString().replace(/[^0-9.-]/g, '')) || 0;
-              return sum + (tx.type === 'income' ? amt : -amt);
-            }, 0);
-            setBalance(bal);
-          }
-        } catch (e) {
-          const bal = data.reduce((sum, tx) => {
-            const amt = parseFloat((tx.amount || '0').toString().replace(/[^0-9.-]/g, '')) || 0;
-            return sum + (tx.type === 'income' ? amt : -amt);
-          }, 0);
-          setBalance(bal);
-        }
-      }
+      await fetchWalletData();
     } catch (err) {
       console.warn('Failed to refresh transactions', err);
     }
@@ -191,15 +176,15 @@ export default function Wallet({ token, onBack, theme = 'dark', onNavigateToDash
     if (token) {
       try {
         const created = await createTransaction(token, tx);
-        setTransactions((prev) => [created, ...prev]);
+        setTransactions((prev) => { const next = [created, ...prev]; walletCache = { token, transactions: next, balance: newBalance }; return next; });
         try { await updateBalance(token, newBalance); } catch (e) { console.warn('Failed to update balance', e); }
       } catch (err) {
         console.warn('Failed to save transaction', err);
-        setTransactions((prev) => [tx, ...prev]);
+        setTransactions((prev) => { const next = [tx, ...prev]; walletCache = { token, transactions: next, balance: newBalance }; return next; });
         try { await updateBalance(token, newBalance); } catch (e) { console.warn('Failed to update balance', e); }
       }
     } else {
-      setTransactions((prev) => [tx, ...prev]);
+      setTransactions((prev) => { const next = [tx, ...prev]; walletCache = { token, transactions: next, balance: newBalance }; return next; });
     }
     Alert.alert('Success', `$${numAmt} has been added to your wallet`);
     setAmount('');
@@ -227,15 +212,15 @@ export default function Wallet({ token, onBack, theme = 'dark', onNavigateToDash
     if (token) {
       try {
         const created = await createTransaction(token, tx);
-        setTransactions((prev) => [created, ...prev]);
+        setTransactions((prev) => { const next = [created, ...prev]; walletCache = { token, transactions: next, balance: newBalance }; return next; });
         try { await updateBalance(token, newBalance); } catch (e) { console.warn('Failed to update balance', e); }
       } catch (err) {
         console.warn('Failed to save transaction', err);
-        setTransactions((prev) => [tx, ...prev]);
+        setTransactions((prev) => { const next = [tx, ...prev]; walletCache = { token, transactions: next, balance: newBalance }; return next; });
         try { await updateBalance(token, newBalance); } catch (e) { console.warn('Failed to update balance', e); }
       }
     } else {
-      setTransactions((prev) => [tx, ...prev]);
+      setTransactions((prev) => { const next = [tx, ...prev]; walletCache = { token, transactions: next, balance: newBalance }; return next; });
     }
     Alert.alert('Success', `$${numAmt} transferred to ${recipient}`);
     setRecipient('');
@@ -264,15 +249,15 @@ export default function Wallet({ token, onBack, theme = 'dark', onNavigateToDash
     if (token) {
       try {
         const created = await createTransaction(token, tx);
-        setTransactions((prev) => [created, ...prev]);
+        setTransactions((prev) => { const next = [created, ...prev]; walletCache = { token, transactions: next, balance: newBalance }; return next; });
         try { await updateBalance(token, newBalance); } catch (e) { console.warn('Failed to update balance', e); }
       } catch (err) {
         console.warn('Failed to save transaction', err);
-        setTransactions((prev) => [tx, ...prev]);
+        setTransactions((prev) => { const next = [tx, ...prev]; walletCache = { token, transactions: next, balance: newBalance }; return next; });
         try { await updateBalance(token, newBalance); } catch (e) { console.warn('Failed to update balance', e); }
       }
     } else {
-      setTransactions((prev) => [tx, ...prev]);
+      setTransactions((prev) => { const next = [tx, ...prev]; walletCache = { token, transactions: next, balance: newBalance }; return next; });
     }
     Alert.alert('Success', `$${numAmt} bill payment submitted`);
     setAmount('');
@@ -445,7 +430,7 @@ export default function Wallet({ token, onBack, theme = 'dark', onNavigateToDash
                       const amt = parseFloat((tx.amount || '0').toString().replace(/[^0-9.-]/g, '')) || 0;
                       return sum + (tx.type === 'income' ? amt : -amt);
                     }, 0);
-                    setBalance(bal);
+                    setBalance(bal); walletCache = { token, transactions: newList, balance: bal };
                     if (token) {
                       try { await updateBalance(token, bal); } catch (e) { console.warn('Failed to persist balance', e); }
                     }
